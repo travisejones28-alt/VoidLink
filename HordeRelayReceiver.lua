@@ -469,12 +469,12 @@ local destinationsLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
 destinationsLabel:SetPoint("TOPLEFT",20,-242)
 destinationsLabel:SetText("Output destinations")
 
-MakeCheck(cfg,"Enable receiver",20,-456,function() return DB.enabled end,function(v) DB.enabled=v end)
-MakeCheck(cfg,"Private relay window",20,-456,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
-MakeCheck(cfg,"Normal chat",20,-456,function() return DB.printToChat end,function(v) DB.printToChat=v end)
-MakeCheck(cfg,"Party chat",20,-456,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
-MakeCheck(cfg,"Raid chat",20,-456,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
-MakeCheck(cfg,"Guild chat",20,-456,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
+MakeCheck(cfg,"Enable receiver",20,-264,function() return DB.enabled end,function(v) DB.enabled=v end)
+MakeCheck(cfg,"Private relay window",20,-296,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
+MakeCheck(cfg,"Normal chat",20,-328,function() return DB.printToChat end,function(v) DB.printToChat=v end)
+MakeCheck(cfg,"Party chat",20,-360,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
+MakeCheck(cfg,"Raid chat",20,-392,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
+MakeCheck(cfg,"Guild chat",20,-424,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
 MakeCheck(cfg,"Emote",20,-456,function() return DB.emoteRelay end,function(v) DB.emoteRelay=v end)
 
 -- Formatting / behavior.

@@ -44,6 +44,7 @@ local defaults = {
     -- These are independent of the output destinations below.
     relayGeneral=true,
     relayLocalDefense=true,
+    relayGuild=true,
     relayIncomingDM=true,
     relayOutgoingDM=true,
 
@@ -459,21 +460,22 @@ relayTypesLabel:SetText("Relay types")
 
 MakeCheck(cfg,"General",20,-70,function() return DB.relayGeneral end,function(v) DB.relayGeneral=v end)
 MakeCheck(cfg,"Local Defense",20,-102,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
-MakeCheck(cfg,"Incoming DMs",20,-134,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
-MakeCheck(cfg,"Outgoing DMs",20,-166,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
+MakeCheck(cfg,"Guild",20,-134,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
+MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
+MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
 
 -- Output destinations. These decide WHERE enabled relay types are shown/sent.
 local destinationsLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
-destinationsLabel:SetPoint("TOPLEFT",20,-210)
+destinationsLabel:SetPoint("TOPLEFT",20,-242)
 destinationsLabel:SetText("Output destinations")
 
-MakeCheck(cfg,"Enable receiver",20,-232,function() return DB.enabled end,function(v) DB.enabled=v end)
-MakeCheck(cfg,"Private relay window",20,-264,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
-MakeCheck(cfg,"Normal chat",20,-296,function() return DB.printToChat end,function(v) DB.printToChat=v end)
-MakeCheck(cfg,"Party chat",20,-328,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
-MakeCheck(cfg,"Raid chat",20,-360,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
-MakeCheck(cfg,"Guild chat",20,-392,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
-MakeCheck(cfg,"Emote",20,-424,function() return DB.emoteRelay end,function(v) DB.emoteRelay=v end)
+MakeCheck(cfg,"Enable receiver",20,-456,function() return DB.enabled end,function(v) DB.enabled=v end)
+MakeCheck(cfg,"Private relay window",20,-456,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
+MakeCheck(cfg,"Normal chat",20,-456,function() return DB.printToChat end,function(v) DB.printToChat=v end)
+MakeCheck(cfg,"Party chat",20,-456,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
+MakeCheck(cfg,"Raid chat",20,-456,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
+MakeCheck(cfg,"Guild chat",20,-456,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
+MakeCheck(cfg,"Emote",20,-456,function() return DB.emoteRelay end,function(v) DB.emoteRelay=v end)
 
 -- Formatting / behavior.
 local formattingLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -1305,6 +1307,7 @@ local function HandlePayload(payload,senderID)
     -- Party/Raid/Guild/Emote forwarding.
     if kind=="GEN" and not DB.relayGeneral then return end
     if kind=="LD" and not DB.relayLocalDefense then return end
+    if kind=="GUILD" and not DB.relayGuild then return end
     if kind=="DM" and not DB.relayIncomingDM then return end
     if kind=="DMOUT" and not DB.relayOutgoingDM then return end
 

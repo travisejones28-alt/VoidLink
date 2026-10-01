@@ -38,7 +38,6 @@ local defaults = {
     partyRelay=false,
     raidRelay=false,
     guildRelay=false,
-    emoteRelay=false,
 
     -- Choose which Alliance message TYPES this Horde receiver accepts at all.
     -- These are independent of the output destinations below.
@@ -56,7 +55,7 @@ local defaults = {
     spyChatMaxPerDay=5000,
 
     -- DMs are private by default. These only control whether a relayed whisper
-    -- is re-broadcast into Party/Raid/Guild/Emote on the Horde character.
+    -- is re-broadcast into Party/Raid/Guild on the Horde character.
     broadcastIncomingDM=false,
     broadcastOutgoingDM=false,
 
@@ -475,7 +474,6 @@ MakeCheck(cfg,"Normal chat",20,-328,function() return DB.printToChat end,functio
 MakeCheck(cfg,"Party chat",20,-360,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
 MakeCheck(cfg,"Raid chat",20,-392,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
 MakeCheck(cfg,"Guild chat",20,-424,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
-MakeCheck(cfg,"Emote",20,-456,function() return DB.emoteRelay end,function(v) DB.emoteRelay=v end)
 
 -- Formatting / behavior.
 local formattingLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -502,8 +500,8 @@ local dmSafetyLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
 dmSafetyLabel:SetPoint("TOPLEFT",20,-462)
 dmSafetyLabel:SetText("DM public broadcast safety")
 
-MakeCheck(cfg,"Allow incoming DMs to Party/Raid/Guild/Emote",20,-484,function() return DB.broadcastIncomingDM end,function(v) DB.broadcastIncomingDM=v end)
-MakeCheck(cfg,"Allow outgoing DMs to Party/Raid/Guild/Emote",20,-516,function() return DB.broadcastOutgoingDM end,function(v) DB.broadcastOutgoingDM=v end)
+MakeCheck(cfg,"Allow incoming DMs to Party/Raid/Guild",20,-484,function() return DB.broadcastIncomingDM end,function(v) DB.broadcastIncomingDM=v end)
+MakeCheck(cfg,"Allow outgoing DMs to Party/Raid/Guild",20,-516,function() return DB.broadcastOutgoingDM end,function(v) DB.broadcastOutgoingDM=v end)
 MakeCheck(cfg,"Lost alert to myself",270,-454,function() return DB.connectionReportSelf end,function(v) DB.connectionReportSelf=v end)
 MakeCheck(cfg,"Lost alert to party/raid",270,-486,function() return DB.connectionReportParty end,function(v) DB.connectionReportParty=v end)
 
@@ -675,7 +673,7 @@ end)
 local function CleanOutgoing(s)
     s=tostring(s or "")
 
-    -- Strip WoW color markup before forwarding to Party/Raid/Guild/Emote.
+    -- Strip WoW color markup before forwarding to Party/Raid/Guild.
     -- Some relayed system/defense messages arrive with the pipe character
     -- already converted to '/', e.g. /cfffff00Southshore is under attack!/r.
     -- Handle both forms so formatting codes never leak into public chat.
@@ -884,9 +882,6 @@ local function PublicRelay(kind,zone,author,level,class,timestamp,text)
     end
     if DB.guildRelay and IsInGuild and IsInGuild() then
         SendChatMessage(msg,"GUILD")
-    end
-    if DB.emoteRelay then
-        SendChatMessage(msg,"EMOTE")
     end
 end
 
@@ -1304,7 +1299,7 @@ local function HandlePayload(payload,senderID)
 
     -- Per-type receiver filters. Turning one of these off drops that message
     -- type completely on Horde: no private window, local chat, sound, or
-    -- Party/Raid/Guild/Emote forwarding.
+    -- Party/Raid/Guild forwarding.
     if kind=="GEN" and not DB.relayGeneral then return end
     if kind=="LD" and not DB.relayLocalDefense then return end
     if kind=="GUILD" and not DB.relayGuild then return end

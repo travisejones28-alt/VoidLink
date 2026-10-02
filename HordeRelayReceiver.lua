@@ -48,9 +48,10 @@ local defaults = {
     relayIncomingDM=true,
     relayOutgoingDM=true,
 
-    -- Persistent spy-chat archive. General/LocalDefense relay packets are logged
-    -- as soon as they reach this receiver, even if current-zone/output filters
-    -- later hide them. Direct messages are intentionally never archived.
+    -- Persistent spy-chat archive. Every Alliance spy relay packet is logged
+    -- as soon as it reaches this receiver, before receiver display/output
+    -- filters are applied. This includes General, LocalDefense, Party, Guild,
+    -- incoming DMs, and outgoing DMs.
     spyChatLogging=true,
     spyChatRetentionDays=30,
     spyChatMaxPerDay=5000,
@@ -1151,9 +1152,9 @@ end
 
 -- Persistent relay-chat archive ------------------------------------------------
 -- Stored inside HordeRelayReceiverDB, which is already a SavedVariables table.
--- We log only readable Alliance General/LocalDefense relay traffic. Whispers,
--- outbound DMs, Common gibberish, NPC speech, addon diagnostics, and kill output
--- never enter this archive.
+-- Log every readable chat packet sent by the Alliance spy: General,
+-- LocalDefense, Party, Guild, incoming DMs, and outgoing DMs. Addon diagnostics,
+-- heartbeat/pairing traffic, WHO responses, and test packets are not archived.
 local function SpyLogDayKey(epoch)
     epoch = tonumber(epoch) or (time and time()) or 0
     if date then
@@ -1183,7 +1184,17 @@ end
 
 local function LogSpyRelayChat(kind, zone, author, level, class, timestamp, message)
     if not DB or not DB.spyChatLogging then return end
-    if kind ~= "GEN" and kind ~= "LD" then return end
+
+    -- Only archive supported human-readable chat types from the Alliance spy.
+    -- Keep protocol/system packets out of the persistent chat history.
+    if kind ~= "GEN"
+       and kind ~= "LD"
+       and kind ~= "PARTY"
+       and kind ~= "GUILD"
+       and kind ~= "DM"
+       and kind ~= "DMOUT" then
+        return
+    end
 
     DB.spyChatLog = DB.spyChatLog or {}
 
@@ -1297,8 +1308,8 @@ local function HandlePayload(payload,senderID)
     if IsDefenseSystemAlert(kind, text) then return end
 
     -- Archive the raw readable spy feed before display/output filtering.
-    -- This means the log still captures a General/LocalDefense line even if
-    -- "Only current zone" or an output destination would otherwise hide it.
+    -- This preserves every supported spy chat type even if receiver type,
+    -- current-zone, or output settings would otherwise hide it.
     LogSpyRelayChat(kind, zone, author, level, class, timestamp, text)
 
     -- Per-type receiver filters. Turning one of these off drops that message

@@ -181,6 +181,8 @@ local function RefreshPanel()
     modeText:SetText("Active mode: |cffffffff"..string.upper(DB.mode or "receiver").."|r")
     senderBtn:SetEnabled(DB.mode ~= "sender")
     receiverBtn:SetEnabled(DB.mode ~= "receiver")
+    senderSettings:SetEnabled(DB.mode == "sender")
+    receiverSettings:SetEnabled(DB.mode == "receiver")
     chatBtn:SetEnabled(DB.mode == "receiver")
 end
 

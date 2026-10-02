@@ -231,6 +231,7 @@ recoveryBtn:SetMovable(true)
 recoveryBtn:EnableMouse(true)
 recoveryBtn:RegisterForDrag("LeftButton")
 recoveryBtn:SetClampedToScreen(true)
+recoveryBtn:Hide()
 win:SetSize(620,260)
 win:SetMovable(true)
 win:SetResizable(true)
@@ -1563,6 +1564,11 @@ f:SetScript("OnEvent",function(self,event,...)
         Print("Loaded. Auto-connect enabled. Use the VoidLink minimap icon to open settings/chat.")
         return
     end
+
+    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then
+        return
+    end
+
     if event=="BN_FRIEND_INFO_CHANGED" then
         if not lastHeartbeat or (GetTime()-lastHeartbeat)>15 then
             C_Timer.After(1,function() StartAllianceConnect(true) end)

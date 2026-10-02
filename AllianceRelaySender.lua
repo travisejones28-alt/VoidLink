@@ -36,7 +36,7 @@ local defaults = {
     enabled = true,
     relayGeneral = true,
     relayLocalDefense = true,
-    relayParty = false,
+    relayParty = true,
     relayGuild = true,
     relayWhispers = true,
     receiverGameAccountID = nil, -- legacy/primary mirror
@@ -90,7 +90,7 @@ local ZONE_ABBR = {
 }
 
 local function Print(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99AllianceRelay|r: " .. tostring(msg))
+    DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99VoidLink Sender|r: " .. tostring(msg))
 end
 
 local function ApplyDefaults()
@@ -100,6 +100,16 @@ DB.whoDatabase = whoCache
     DB = AllianceRelaySenderDB
     for k,v in pairs(defaults) do
         if DB[k] == nil then DB[k] = v end
+    end
+
+    -- VoidLink unified-mode migration: the Sender role is intended to capture
+    -- and relay the complete player-chat feed requested for intelligence history.
+    if (tonumber(DB.voidLinkSettingsVersion) or 0) < 2 then
+        DB.relayGeneral = true
+        DB.relayLocalDefense = true
+        DB.relayParty = true
+        DB.relayWhispers = true
+        DB.voidLinkSettingsVersion = 2
     end
 end
 
@@ -772,7 +782,8 @@ end
 local function Relay(kind, senderName, text)
     -- HARD SAFETY GATE: this addon may exist in the shared AddOns folder on
     -- Horde clients too. Never forward local Horde chat into the relay.
-    if UnitFactionGroup("player") ~= "Alliance" then return end
+    if UnitFactionGroup("player") ~= "Alliance"
+       or not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then return end
     if not DB.enabled or ReceiverCount(false) == 0 then return end
     if DB.ignoreOwnMessages and StripRealm(senderName) == UnitName("player") then return end
     if not MatchesKeyword(text) then return end
@@ -1120,7 +1131,7 @@ cfg:Hide()
 
 local title = cfg:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
 title:SetPoint("TOP",0,-14)
-title:SetText("Alliance Relay Settings")
+title:SetText("VoidLink Sender Settings")
 
 -- Drag the settings window by the title/header area.
 local cfgDragBar = CreateFrame("Frame", nil, cfg)
@@ -1448,10 +1459,17 @@ SlashCmdList["ALLIANCERELAYDIAG"]=function()
     end
 end
 
+_G.VoidLink_OpenSenderSettings=function()
+    if not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then return end
+    if UnitFactionGroup("player") ~= "Alliance" then return end
+    cfg:Show()
+end
+
 SLASH_ALLIANCERELAY1="/ar"
 SlashCmdList["ALLIANCERELAY"]=function()
-    if UnitFactionGroup("player") == "Horde" then return end
-    if cfg:IsShown() then cfg:Hide() else cfg:Show() end
+    if _G.VoidLink_OpenSenderSettings then
+        _G.VoidLink_OpenSenderSettings()
+    end
 end
 
 f:RegisterEvent("ADDON_LOADED")
@@ -1473,7 +1491,8 @@ f:SetScript("OnEvent",function(self,event,...)
         return
     end
     if event=="PLAYER_LOGIN" then
-        if UnitFactionGroup("player") ~= "Alliance" then
+        if UnitFactionGroup("player") ~= "Alliance"
+           or not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then
             -- The WoW AddOns directory is shared by every account using this
             -- install, so AllianceRelaySender can load on Horde characters too.
             -- Make the sender completely inert there.
@@ -1509,7 +1528,7 @@ f:SetScript("OnEvent",function(self,event,...)
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
             C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
         end
-        RestoreLauncher()
+        if launcher then launcher:Hide() end
         EnsureReceiverDB()
         for _,r in ipairs(DB.receivers or {}) do r.lastAck=0 end
         RestartHeartbeat()
@@ -1660,6 +1679,9 @@ f:SetScript("OnEvent",function(self,event,...)
         local text,senderName,languageName,channelName,target,flags,
               zoneChannelID,channelIndex,channelBaseName=...
         local kind=ChannelKind(channelName,channelBaseName)
+        if kind and VoidLink and VoidLink.LogChat then
+            VoidLink:LogChat(kind,GetZone(),StripRealm(senderName),text,"CHANNEL")
+        end
         if kind=="GEN" and DB.relayGeneral then Relay(kind,senderName,text)
         elseif kind=="LD" and DB.relayLocalDefense then Relay(kind,senderName,text)
         end
@@ -1668,6 +1690,9 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="CHAT_MSG_PARTY" or event=="CHAT_MSG_PARTY_LEADER" then
         local text,senderName=...
+        if VoidLink and VoidLink.LogChat then
+            VoidLink:LogChat("PARTY",GetZone(),StripRealm(senderName),text,"PARTY")
+        end
         if DB.relayParty then
             Relay("PARTY",senderName,text)
         end
@@ -1685,16 +1710,22 @@ f:SetScript("OnEvent",function(self,event,...)
     -- Relay normal in-game /whisper direct messages in both directions.
     -- DM = received whisper; DMOUT = whisper sent by this Alliance character.
     if event=="CHAT_MSG_WHISPER" then
+        local text,senderName=...
+        if VoidLink and VoidLink.LogChat then
+            VoidLink:LogChat("DM",GetZone(),StripRealm(senderName),text,"IN")
+        end
         if DB.relayWhispers then
-            local text,senderName=...
             Relay("DM",senderName,text)
         end
         return
     end
 
     if event=="CHAT_MSG_WHISPER_INFORM" then
+        local text,targetName=...
+        if VoidLink and VoidLink.LogChat then
+            VoidLink:LogChat("DMOUT",GetZone(),StripRealm(targetName),text,"OUT")
+        end
         if DB.relayWhispers then
-            local text,targetName=...
             Relay("DMOUT",targetName,text)
         end
         return

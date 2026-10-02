@@ -213,8 +213,11 @@ border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 local icon = minimapButton:CreateTexture(nil,"BACKGROUND")
 icon:SetSize(20,20)
 icon:SetPoint("CENTER",0,1)
-icon:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_8")
-icon:SetTexCoord(0,1,0,1)
+-- Use the skull badge from VoidMark's custom Banner panic artwork.
+-- The banner is 300x150; this crops its left skull/badge section into the
+-- square minimap icon instead of using the generic Blizzard raid skull.
+icon:SetTexture("Interface\\AddOns\\VoidMark\\Media\\Panic\\panic_banner.tga")
+icon:SetTexCoord(0.02,0.38,0.10,0.90)
 
 local function UpdateMinimapPosition()
     local angle = math.rad(tonumber(DB.minimapAngle) or 225)

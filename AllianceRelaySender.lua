@@ -36,6 +36,7 @@ local defaults = {
     enabled = true,
     relayGeneral = true,
     relayLocalDefense = true,
+    relayParty = false,
     relayGuild = true,
     relayWhispers = true,
     receiverGameAccountID = nil, -- legacy/primary mirror
@@ -1154,6 +1155,7 @@ MakeCheck(cfg,"Heartbeat",20,-178,function() return DB.heartbeatEnabled end,func
 MakeCheck(cfg,"Relay Direct Messages",20,-210,function() return DB.relayWhispers end,function(v) DB.relayWhispers=v end)
 MakeCheck(cfg,"Relay General",20,-82,function() return DB.relayGeneral end,function(v) DB.relayGeneral=v end)
 MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
+MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
 MakeCheck(cfg,"Ignore my own messages",20,-146,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
 
@@ -1455,6 +1457,8 @@ end
 f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("CHAT_MSG_CHANNEL")
+f:RegisterEvent("CHAT_MSG_PARTY")
+f:RegisterEvent("CHAT_MSG_PARTY_LEADER")
 f:RegisterEvent("CHAT_MSG_GUILD")
 f:RegisterEvent("CHAT_MSG_WHISPER")
 f:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
@@ -1479,6 +1483,8 @@ f:SetScript("OnEvent",function(self,event,...)
             if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
             receiverMonitorTicker = nil
             self:UnregisterEvent("CHAT_MSG_CHANNEL")
+            self:UnregisterEvent("CHAT_MSG_PARTY")
+            self:UnregisterEvent("CHAT_MSG_PARTY_LEADER")
             self:UnregisterEvent("CHAT_MSG_GUILD")
             self:UnregisterEvent("CHAT_MSG_WHISPER")
             self:UnregisterEvent("CHAT_MSG_WHISPER_INFORM")
@@ -1656,6 +1662,14 @@ f:SetScript("OnEvent",function(self,event,...)
         local kind=ChannelKind(channelName,channelBaseName)
         if kind=="GEN" and DB.relayGeneral then Relay(kind,senderName,text)
         elseif kind=="LD" and DB.relayLocalDefense then Relay(kind,senderName,text)
+        end
+        return
+    end
+
+    if event=="CHAT_MSG_PARTY" or event=="CHAT_MSG_PARTY_LEADER" then
+        local text,senderName=...
+        if DB.relayParty then
+            Relay("PARTY",senderName,text)
         end
         return
     end

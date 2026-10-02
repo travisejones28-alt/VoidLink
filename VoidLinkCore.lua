@@ -220,20 +220,71 @@ icon:SetPoint("CENTER",0,1)
 icon:SetTexture("Interface\\AddOns\\VoidMark\\Media\\Panic\\panic_banner.tga")
 icon:SetTexCoord(0.02,0.38,0.10,0.90)
 
+local MINIMAP_RADIUS = 80
+local MINIMAP_EDGE_PAD = 2
+
+local function IsSquareMinimap()
+    if type(GetMinimapShape) == "function" then
+        local ok, shape = pcall(GetMinimapShape)
+        if ok and type(shape) == "string" then
+            shape = shape:upper()
+            if shape:find("SQUARE", 1, true) then return true end
+            if shape == "ROUND" then return false end
+        end
+    end
+
+    -- ElvUI's Classic minimap is square even when the Blizzard shape hint
+    -- still reports ROUND or is unavailable.
+    if type(_G.ElvUI) == "table" then return true end
+
+    return false
+end
+
+local function SquareOffset(angle)
+    local dx,dy = math.cos(angle),math.sin(angle)
+    local halfW = ((Minimap and Minimap:GetWidth()) or (MINIMAP_RADIUS*2))*0.5 + MINIMAP_EDGE_PAD
+    local halfH = ((Minimap and Minimap:GetHeight()) or (MINIMAP_RADIUS*2))*0.5 + MINIMAP_EDGE_PAD
+
+    local ax,ay = math.abs(dx),math.abs(dy)
+    local tx = ax > 0.0001 and (halfW/ax) or math.huge
+    local ty = ay > 0.0001 and (halfH/ay) or math.huge
+    local t = math.min(tx,ty)
+
+    return dx*t,dy*t
+end
+
+local function Atan2(y,x)
+    if math.atan2 then return math.atan2(y,x) end
+    if x > 0 then return math.atan(y/x) end
+    if x < 0 and y >= 0 then return math.atan(y/x)+math.pi end
+    if x < 0 and y < 0 then return math.atan(y/x)-math.pi end
+    if x == 0 and y > 0 then return math.pi/2 end
+    if x == 0 and y < 0 then return -math.pi/2 end
+    return 0
+end
+
 local function UpdateMinimapPosition()
     local angle = math.rad(tonumber(DB.minimapAngle) or 225)
-    local radius = 80
+    local x,y
+
+    if IsSquareMinimap() then
+        x,y = SquareOffset(angle)
+    else
+        x,y = math.cos(angle)*MINIMAP_RADIUS,math.sin(angle)*MINIMAP_RADIUS
+    end
+
     minimapButton:ClearAllPoints()
-    minimapButton:SetPoint("CENTER",Minimap,"CENTER",math.cos(angle)*radius,math.sin(angle)*radius)
+    minimapButton:SetPoint("CENTER",Minimap,"CENTER",x,y)
 end
 
 minimapButton:SetScript("OnDragStart",function(self)
     self:SetScript("OnUpdate",function()
         local mx,my = Minimap:GetCenter()
-        local scale = Minimap:GetEffectiveScale()
+        local scale = UIParent:GetEffectiveScale()
         local cx,cy = GetCursorPosition()
+        if not mx or not my or not cx or not cy or not scale or scale == 0 then return end
         cx,cy = cx/scale,cy/scale
-        DB.minimapAngle = math.deg(math.atan2(cy-my,cx-mx))
+        DB.minimapAngle = math.deg(Atan2(cy-my,cx-mx))
         UpdateMinimapPosition()
     end)
 end)

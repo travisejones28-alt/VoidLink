@@ -43,6 +43,7 @@ local defaults = {
     -- These are independent of the output destinations below.
     relayGeneral=true,
     relayLocalDefense=true,
+    relayPartySource=true,
     relayGuild=true,
     relayIncomingDM=true,
     relayOutgoingDM=true,
@@ -460,6 +461,7 @@ relayTypesLabel:SetText("Relay types")
 MakeCheck(cfg,"General",20,-70,function() return DB.relayGeneral end,function(v) DB.relayGeneral=v end)
 MakeCheck(cfg,"Local Defense",20,-102,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
 MakeCheck(cfg,"Guild",20,-134,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
+MakeCheck(cfg,"Party source",140,-134,function() return DB.relayPartySource end,function(v) DB.relayPartySource=v end)
 MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
 MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
 
@@ -756,6 +758,8 @@ local function BuildLine(kind,zone,author,level,class,timestamp,text,colored)
             short="(LD)"
         elseif kind=="GEN" then
             short="(G)"
+        elseif kind=="PARTY" then
+            short="(P)"
         elseif kind=="DM" then
             short="(DM IN)"
         elseif kind=="DMOUT" then
@@ -1302,6 +1306,7 @@ local function HandlePayload(payload,senderID)
     -- Party/Raid/Guild forwarding.
     if kind=="GEN" and not DB.relayGeneral then return end
     if kind=="LD" and not DB.relayLocalDefense then return end
+    if kind=="PARTY" and not DB.relayPartySource then return end
     if kind=="GUILD" and not DB.relayGuild then return end
     if kind=="DM" and not DB.relayIncomingDM then return end
     if kind=="DMOUT" and not DB.relayOutgoingDM then return end
@@ -1328,7 +1333,7 @@ local function HandlePayload(payload,senderID)
     -- Zone filtering applies to General/LocalDefense reports only. A direct
     -- message is still relevant even when the Alliance and Horde characters
     -- are in different zones.
-    if kind~="DM" and kind~="DMOUT" and DB.onlyCurrentZone
+    if (kind=="GEN" or kind=="LD" or kind=="GUILD") and DB.onlyCurrentZone
        and zone ~= (GetRealZoneText and GetRealZoneText() or GetZoneText()) then
         return
     end

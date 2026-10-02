@@ -1114,6 +1114,7 @@ launcher:SetMovable(true)
 launcher:EnableMouse(true)
 launcher:RegisterForDrag("LeftButton")
 launcher:SetClampedToScreen(true)
+launcher:Hide()
 
 local cfg = CreateFrame("Frame","AllianceRelayConfig",UIParent,"BackdropTemplate")
 cfg:SetSize(460,560)

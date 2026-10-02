@@ -1,3 +1,4 @@
+-- Repushed banner-panic minimap skull crop: 2026-10-02
 local ADDON_NAME = ...
 
 VoidLinkDB = VoidLinkDB or {}

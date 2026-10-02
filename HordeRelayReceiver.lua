@@ -31,7 +31,7 @@ local lastAutoConnectAt = 0
 
 local defaults = {
     enabled=true,
-    showWindow=true,
+    showWindow=false,
     locked=false,
     printToChat=false,
     whoResultsToChat=false,
@@ -172,7 +172,7 @@ local function GetRememberedRemotePlayer(name)
 end
 
 local function Print(msg)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555HordeRelay|r: "..tostring(msg))
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555VoidLink Receiver|r: "..tostring(msg))
 end
 
 local function ApplyDefaults()
@@ -303,7 +303,7 @@ end)
 
 local title=win:CreateFontString(nil,"OVERLAY","GameFontNormal")
 title:SetPoint("TOPLEFT",10,-8)
-title:SetText("Alliance Defense Relay")
+title:SetText("VoidLink Chat")
 
 
 -- Dedicated drag strip so the message frame/buttons do not steal mouse drags.
@@ -425,7 +425,7 @@ cfg:Hide()
 
 local ct=cfg:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
 ct:SetPoint("TOP",0,-15)
-ct:SetText("Horde Relay Settings")
+ct:SetText("VoidLink Receiver Settings")
 
 
 local cfgDragBar=CreateFrame("Frame",nil,cfg)
@@ -1505,9 +1505,27 @@ SlashCmdList["HORDERELAYLOG"]=function(msg)
     Print("Usage: /hrlog [stats|on|off]")
 end
 
+_G.VoidLink_OpenReceiverSettings=function()
+    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then return end
+    cfg:Show()
+end
+
+_G.VoidLink_ToggleReceiverWindow=function()
+    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then return end
+    DB.showWindow = not win:IsShown()
+    if DB.showWindow then
+        Restore()
+        win:Show()
+    else
+        win:Hide()
+    end
+end
+
 SLASH_HORDERELAY1="/hr"
 SlashCmdList["HORDERELAY"]=function()
-    if cfg:IsShown() then cfg:Hide() else cfg:Show() end
+    if _G.VoidLink_OpenReceiverSettings then
+        _G.VoidLink_OpenReceiverSettings()
+    end
 end
 
 f:RegisterEvent("ADDON_LOADED")
@@ -1526,11 +1544,23 @@ f:SetScript("OnEvent",function(self,event,...)
         ApplyDefaults()
         Apply124Migration()
         DB.bnDebug=false
+
+        if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then
+            win:Hide()
+            cfg:Hide()
+            recoveryBtn:Hide()
+            connectionAlertFrame:Hide()
+            return
+        end
+
         RegisterPrefix()
-        ForceRecoverWindow()
+        DB.showWindow=false
+        Restore()
+        win:Hide()
+        recoveryBtn:Hide()
         StartConnectionMonitor()
         C_Timer.After(3,function() StartAllianceConnect(true) end)
-        Print("Loaded. Auto-connect enabled; use Connect to Alliance as a fallback.")
+        Print("Loaded. Auto-connect enabled. Use the VoidLink minimap icon to open settings/chat.")
         return
     end
     if event=="BN_FRIEND_INFO_CHANGED" then

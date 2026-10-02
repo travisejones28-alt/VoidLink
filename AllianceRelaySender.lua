@@ -1157,7 +1157,7 @@ MakeCheck(cfg,"Relay General",20,-82,function() return DB.relayGeneral end,funct
 MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
 MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
-MakeCheck(cfg,"Ignore my own messages",20,-146,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
+MakeCheck(cfg,"Ignore my own messages",220,-242,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
 
 MakeCheck(cfg,"Include timestamp",220,-50,function() return DB.includeTimestamp end,function(v) DB.includeTimestamp=v end)
 MakeCheck(cfg,"Include zone",220,-82,function() return DB.includeZone end,function(v) DB.includeZone=v end)

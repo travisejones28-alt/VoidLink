@@ -1678,9 +1678,6 @@ f:SetScript("OnEvent",function(self,event,...)
         local text,senderName,languageName,channelName,target,flags,
               zoneChannelID,channelIndex,channelBaseName=...
         local kind=ChannelKind(channelName,channelBaseName)
-        if kind and VoidLink and VoidLink.LogChat then
-            VoidLink:LogChat(kind,GetZone(),StripRealm(senderName),text,"CHANNEL")
-        end
         if kind=="GEN" and DB.relayGeneral then Relay(kind,senderName,text)
         elseif kind=="LD" and DB.relayLocalDefense then Relay(kind,senderName,text)
         end
@@ -1689,9 +1686,6 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="CHAT_MSG_PARTY" or event=="CHAT_MSG_PARTY_LEADER" then
         local text,senderName=...
-        if VoidLink and VoidLink.LogChat then
-            VoidLink:LogChat("PARTY",GetZone(),StripRealm(senderName),text,"PARTY")
-        end
         if DB.relayParty then
             Relay("PARTY",senderName,text)
         end
@@ -1710,9 +1704,6 @@ f:SetScript("OnEvent",function(self,event,...)
     -- DM = received whisper; DMOUT = whisper sent by this Alliance character.
     if event=="CHAT_MSG_WHISPER" then
         local text,senderName=...
-        if VoidLink and VoidLink.LogChat then
-            VoidLink:LogChat("DM",GetZone(),StripRealm(senderName),text,"IN")
-        end
         if DB.relayWhispers then
             Relay("DM",senderName,text)
         end
@@ -1721,9 +1712,6 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="CHAT_MSG_WHISPER_INFORM" then
         local text,targetName=...
-        if VoidLink and VoidLink.LogChat then
-            VoidLink:LogChat("DMOUT",GetZone(),StripRealm(targetName),text,"OUT")
-        end
         if DB.relayWhispers then
             Relay("DMOUT",targetName,text)
         end

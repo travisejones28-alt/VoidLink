@@ -11,6 +11,7 @@ local defaults = {
     mode = "receiver",
     minimapAngle = 225,
     chatLogging = true,
+    nativeChatLogging = true,
     chatRetentionDays = 30,
     chatMaxPerDay = 5000,
 }
@@ -71,9 +72,11 @@ local function PruneChatLog(currentDay)
 end
 
 function M:LogChat(kind, zone, author, text, direction)
-    if not DB.chatLogging or not self:IsSender() then return end
+    if not DB.chatLogging then return end
     if kind ~= "GEN" and kind ~= "LD" and kind ~= "PARTY"
-       and kind ~= "DM" and kind ~= "DMOUT" then
+       and kind ~= "DM" and kind ~= "DMOUT" and kind ~= "GUILD"
+       and kind ~= "RAID" and kind ~= "SAY" and kind ~= "YELL"
+       and kind ~= "CHANNEL" then
         return
     end
 
@@ -102,7 +105,9 @@ function M:LogChat(kind, zone, author, text, direction)
     bucket.count = bucket.count + 1
     bucket.entries[#bucket.entries + 1] = {
         t = now,
-        time = date("%H:%M"),
+        time = date("%H:%M:%S", now),
+        observer = tostring(UnitName("player") or ""),
+        realm = tostring(GetRealmName() or ""),
         kind = kind,
         zone = tostring(zone or ""),
         author = tostring(author or ""),
@@ -331,6 +336,127 @@ minimapButton:SetScript("OnLeave",function() GameTooltip:Hide() end)
 UpdateMinimapPosition()
 
 SLASH_VOIDLINK1="/voidlink"
-SlashCmdList["VOIDLINK"]=function()
-    if panel:IsShown() then panel:Hide() else panel:Show() end
+local function LogPrint(message)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffb080ffVoidLink:|r "..message)
+end
+
+local function StartNativeLog()
+    if DB.nativeChatLogging and type(LoggingChat) == "function" then
+        local ok = pcall(LoggingChat, true)
+        if not ok then LogPrint("Text logging could not start. Try /chatlog.") end
+    end
+end
+
+function M:GetChatTranscript(day)
+    day = day or DayKey(time())
+    local rows = {}
+    local function Collect(log, source)
+        local bucket = type(log) == "table" and log[day]
+        if type(bucket) ~= "table" then return end
+        for _, entry in ipairs(bucket.entries or {}) do
+            rows[#rows+1] = {entry=entry, source=source}
+        end
+    end
+    Collect(DB.chatLog, "local")
+    Collect(HordeRelayReceiverDB and HordeRelayReceiverDB.spyChatLog, "relay")
+    table.sort(rows, function(a,b) return (tonumber(a.entry.t) or 0) < (tonumber(b.entry.t) or 0) end)
+    local lines = {"VoidLink chat history - "..day}
+    for _, row in ipairs(rows) do
+        local e = row.entry
+        local stamp = tonumber(e.t) and date("%H:%M:%S", e.t) or tostring(e.time or "")
+        lines[#lines+1] = string.format("[%s] [%s] [%s] [%s] %s: %s",
+            stamp, row.source, tostring(e.kind or ""), tostring(e.zone or ""),
+            tostring(e.author or ""), tostring(e.text or ""))
+    end
+    if #rows == 0 then lines[#lines+1] = "No saved messages for this date." end
+    return table.concat(lines, "\n"), #rows
+end
+
+local exportWindow
+local function ShowExport(day)
+    if not exportWindow then
+        exportWindow = CreateFrame("Frame", "VoidLinkExportWindow", UIParent, "BackdropTemplate")
+        exportWindow:SetSize(700, 480)
+        exportWindow:SetPoint("CENTER")
+        exportWindow:SetFrameStrata("DIALOG")
+        exportWindow:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background"})
+        local label = exportWindow:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        label:SetPoint("TOP",0,-12)
+        label:SetText("Chat export: Ctrl+A, Ctrl+C, then paste into Notepad")
+        local scroll = CreateFrame("ScrollFrame",nil,exportWindow,"UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT",16,-40)
+        scroll:SetPoint("BOTTOMRIGHT",-36,44)
+        local edit = CreateFrame("EditBox",nil,scroll)
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject(ChatFontNormal)
+        edit:SetWidth(640)
+        edit:SetScript("OnEscapePressed",function() exportWindow:Hide() end)
+        scroll:SetScrollChild(edit)
+        exportWindow.edit = edit
+        local close = CreateFrame("Button",nil,exportWindow,"UIPanelButtonTemplate")
+        close:SetSize(80,24)
+        close:SetPoint("BOTTOM",0,12)
+        close:SetText("Close")
+        close:SetScript("OnClick",function() exportWindow:Hide() end)
+    end
+    local transcript = M:GetChatTranscript(day)
+    exportWindow.edit:SetText(transcript)
+    exportWindow:Show()
+    exportWindow.edit:SetFocus()
+    exportWindow.edit:HighlightText()
+end
+
+-- Record directly from chat events, independently of role, relay connection,
+-- relay filters and faction. Own messages must be retained for conversations.
+local logger = CreateFrame("Frame")
+logger:RegisterEvent("PLAYER_LOGIN")
+local chatKinds = {
+    CHAT_MSG_PARTY="PARTY", CHAT_MSG_PARTY_LEADER="PARTY",
+    CHAT_MSG_RAID="RAID", CHAT_MSG_RAID_LEADER="RAID", CHAT_MSG_RAID_WARNING="RAID",
+    CHAT_MSG_GUILD="GUILD", CHAT_MSG_WHISPER="DM", CHAT_MSG_WHISPER_INFORM="DMOUT",
+    CHAT_MSG_SAY="SAY", CHAT_MSG_YELL="YELL", CHAT_MSG_CHANNEL="CHANNEL",
+}
+for event in pairs(chatKinds) do logger:RegisterEvent(event) end
+logger:SetScript("OnEvent",function(_,event,...)
+    if event == "PLAYER_LOGIN" then
+        StartNativeLog()
+        LogPrint("Chat archive "..(DB.chatLogging and "ON" or "OFF")..
+            "; text log "..((type(LoggingChat)=="function" and LoggingChat()) and "ON" or "OFF")..
+            ". /voidlink log shows status; /voidlink export copies history.")
+        return
+    end
+    local text, author, _, channelName, _, _, _, _, channelBaseName = ...
+    local kind = chatKinds[event]
+    if event == "CHAT_MSG_CHANNEL" then
+        local channel = tostring(channelBaseName or channelName or ""):lower():gsub("%s+", "")
+        if channel:find("localdefense",1,true) then kind="LD"
+        elseif channel:find("general",1,true) then kind="GEN" end
+    end
+    M:LogChat(kind, GetRealZoneText() or "", author, text,
+        event == "CHAT_MSG_WHISPER_INFORM" and "OUT" or "IN")
+end)
+
+SlashCmdList["VOIDLINK"]=function(message)
+    local command, arg = tostring(message or ""):match("^(%S*)%s*(.-)$")
+    command = command:lower()
+    if command == "export" then
+        if arg ~= "" and not arg:match("^%d%d%d%d%-%d%d%-%d%d$") then
+            LogPrint("Use /voidlink export YYYY-MM-DD (or omit date for today).")
+            return
+        end
+        ShowExport(arg ~= "" and arg or nil)
+    elseif command == "log" then
+        if arg == "on" or arg == "off" then
+            DB.chatLogging = arg == "on"
+            DB.nativeChatLogging = DB.chatLogging
+            if type(LoggingChat)=="function" then pcall(LoggingChat, DB.nativeChatLogging) end
+        end
+        local _, count = M:GetChatTranscript()
+        LogPrint("Archive "..(DB.chatLogging and "ON" or "OFF").."; today: "..count..
+            " messages. Text log "..((type(LoggingChat)=="function" and LoggingChat()) and "ON" or "OFF")..
+            ": Logs\\WoWChatLog.txt. SavedVariables flush on /reload or logout.")
+    else
+        if panel:IsShown() then panel:Hide() else panel:Show() end
+    end
 end

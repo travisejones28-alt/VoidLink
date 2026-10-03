@@ -1,3 +1,4 @@
+-- Repush: faction-based auto-connect transport confirmed
 
 local ADDON_NAME = ...
 local PREFIX = "AHREL1"

@@ -149,8 +149,6 @@ local function SetMode(mode)
     VoidLinkMode = mode
 
     modeText:SetText("Active mode: |cffffffff"..string.upper(mode).."|r")
-    senderBtn:SetEnabled(mode ~= "sender")
-    receiverBtn:SetEnabled(mode ~= "receiver")
 
     if ReloadUI then
         C_Timer.After(0, ReloadUI)

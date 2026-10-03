@@ -2,6 +2,7 @@
 local ADDON_NAME = ...
 
 VoidLinkDB = VoidLinkDB or {}
+VoidLinkMode = VoidLinkMode or nil
 VoidLink = VoidLink or {}
 local M = VoidLink
 local DB = VoidLinkDB
@@ -15,12 +16,23 @@ local defaults = {
 }
 
 local function ApplyDefaults()
+    -- Restore the dedicated role variable first. This gives the role selector
+    -- a second persistent source of truth in case the DB table was recreated
+    -- or an older build left it incomplete.
+    if VoidLinkMode == "sender" or VoidLinkMode == "receiver" then
+        DB.mode = VoidLinkMode
+    end
+
     for k,v in pairs(defaults) do
         if DB[k] == nil then DB[k] = v end
     end
+
     if DB.mode ~= "sender" and DB.mode ~= "receiver" then
         DB.mode = "receiver"
     end
+
+    -- Keep both saved values synchronized on every load.
+    VoidLinkMode = DB.mode
 end
 
 ApplyDefaults()
@@ -127,10 +139,21 @@ hint:SetText("Choose which role this client runs. The selection is saved.")
 
 local function SetMode(mode)
     if mode ~= "sender" and mode ~= "receiver" then return end
-    if DB.mode == mode then return end
+
+    -- Write through both the local table reference and the SavedVariables
+    -- globals before reloading. The dedicated scalar prevents the client from
+    -- falling back to receiver if the table is rebuilt during reload.
     DB.mode = mode
+    VoidLinkDB = VoidLinkDB or DB or {}
+    VoidLinkDB.mode = mode
+    VoidLinkMode = mode
+
+    modeText:SetText("Active mode: |cffffffff"..string.upper(mode).."|r")
+    senderBtn:SetEnabled(mode ~= "sender")
+    receiverBtn:SetEnabled(mode ~= "receiver")
+
     if ReloadUI then
-        ReloadUI()
+        C_Timer.After(0, ReloadUI)
     end
 end
 

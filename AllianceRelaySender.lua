@@ -782,8 +782,7 @@ end
 local function Relay(kind, senderName, text)
     -- HARD SAFETY GATE: this addon may exist in the shared AddOns folder on
     -- Horde clients too. Never forward local Horde chat into the relay.
-    if UnitFactionGroup("player") ~= "Alliance"
-       or not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then return end
+    if UnitFactionGroup("player") ~= "Alliance" then return end
     if not DB.enabled or ReceiverCount(false) == 0 then return end
     if DB.ignoreOwnMessages and StripRealm(senderName) == UnitName("player") then return end
     if not MatchesKeyword(text) then return end
@@ -1461,7 +1460,6 @@ SlashCmdList["ALLIANCERELAYDIAG"]=function()
 end
 
 _G.VoidLink_OpenSenderSettings=function()
-    if not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then return end
     if UnitFactionGroup("player") ~= "Alliance" then return end
     cfg:Show()
 end
@@ -1492,8 +1490,7 @@ f:SetScript("OnEvent",function(self,event,...)
         return
     end
     if event=="PLAYER_LOGIN" then
-        if UnitFactionGroup("player") ~= "Alliance"
-           or not (VoidLink and VoidLink.IsSender and VoidLink:IsSender()) then
+        if UnitFactionGroup("player") ~= "Alliance" then
             -- The WoW AddOns directory is shared by every account using this
             -- install, so AllianceRelaySender can load on Horde characters too.
             -- Make the sender completely inert there.

@@ -1507,12 +1507,12 @@ SlashCmdList["HORDERELAYLOG"]=function(msg)
 end
 
 _G.VoidLink_OpenReceiverSettings=function()
-    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then return end
+    if UnitFactionGroup("player") ~= "Horde" then return end
     cfg:Show()
 end
 
 _G.VoidLink_ToggleReceiverWindow=function()
-    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then return end
+    if UnitFactionGroup("player") ~= "Horde" then return end
     DB.showWindow = not win:IsShown()
     if DB.showWindow then
         Restore()
@@ -1546,7 +1546,7 @@ f:SetScript("OnEvent",function(self,event,...)
         Apply124Migration()
         DB.bnDebug=false
 
-        if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then
+        if UnitFactionGroup("player") ~= "Horde" then
             win:Hide()
             cfg:Hide()
             recoveryBtn:Hide()
@@ -1565,7 +1565,7 @@ f:SetScript("OnEvent",function(self,event,...)
         return
     end
 
-    if not (VoidLink and VoidLink.IsReceiver and VoidLink:IsReceiver()) then
+    if UnitFactionGroup("player") ~= "Horde" then
         return
     end
 

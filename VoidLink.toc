@@ -1,7 +1,7 @@
 ## Interface: 11509
 ## Title: VoidLink
 ## Notes: VoidMark cross-account/faction intelligence relay.
-## Version: 1.0.1
+## Version: 1.0.2
 ## SavedVariables: VoidLinkDB, VoidLinkMode, AllianceRelaySenderDB, AllianceWhoScannerDB, HordeRelayReceiverDB
 
 VoidLinkCore.lua

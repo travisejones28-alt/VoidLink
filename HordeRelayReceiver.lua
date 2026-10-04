@@ -8,6 +8,7 @@ local DB
 local f = CreateFrame("Frame")
 local recentPayloads = {}
 local history = {}
+local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
 local remoteWhoState = { total=0, ganks=0, zone="", names={} }
@@ -174,6 +175,31 @@ end
 
 local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cffff5555VoidLink Receiver|r: "..tostring(msg))
+end
+
+local function SendRelayChat(message, channel)
+    -- The global is a deprecation fallback on current Classic clients. Resolve
+    -- the supported API at send time, while retaining older-client support.
+    local send = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
+    local ok, err
+    if type(send) == "function" then
+        ok, err = pcall(send, message, channel)
+    else
+        ok, err = false, "chat sending API unavailable"
+    end
+    if ok then
+        forwardingErrors[channel] = nil
+        return true
+    end
+
+    -- Keep destinations independent: a Party/Raid failure must not prevent the
+    -- Guild send. Report each repeating error once, and retain it for /hrdiag.
+    err = tostring(err)
+    if forwardingErrors[channel] ~= err then
+        Print(channel.." forwarding failed: "..err)
+    end
+    forwardingErrors[channel] = err
+    return false
 end
 
 local function ApplyDefaults()
@@ -463,7 +489,7 @@ relayTypesLabel:SetText("Relay types")
 
 MakeCheck(cfg,"General",20,-70,function() return DB.relayGeneral end,function(v) DB.relayGeneral=v end)
 MakeCheck(cfg,"Local Defense",20,-102,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
-MakeCheck(cfg,"Guild",20,-134,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
+MakeCheck(cfg,"Alliance guild",20,-134,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
 MakeCheck(cfg,"Party source",140,-134,function() return DB.relayPartySource end,function(v) DB.relayPartySource=v end)
 MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
 MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
@@ -478,7 +504,7 @@ MakeCheck(cfg,"Private relay window",20,-296,function() return DB.showWindow end
 MakeCheck(cfg,"Normal chat",20,-328,function() return DB.printToChat end,function(v) DB.printToChat=v end)
 MakeCheck(cfg,"Party chat",20,-360,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
 MakeCheck(cfg,"Raid chat",20,-392,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
-MakeCheck(cfg,"Guild chat",20,-424,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
+MakeCheck(cfg,"Forward to guild",20,-424,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
 
 -- Formatting / behavior.
 local formattingLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -784,7 +810,7 @@ local function BuildLine(kind,zone,author,level,class,timestamp,text,colored)
         end
     end
 
-    if DB.includeZone then
+    if DB.includeZone and zone and zone ~= "" and zone ~= "?" then
         local z = DB.abbreviateZone and AbbrevZone(zone) or zone
         table.insert(pieces,"["..z.."]")
     end
@@ -825,7 +851,7 @@ local function BuildPublicLine(zone,author,level,class,text)
     -- The marker color now follows class when class data is known.
     -- Non-60: [ZONE]{class-color marker}(LEVEL)Name: Message
     -- Level 60: [ZONE]{class-color marker}(60)Name[Rog]: Message
-    if DB.includeZone then
+    if DB.includeZone and zone and zone ~= "" and zone ~= "?" then
         local z = AbbrevZone(zone)
         zoneText = "[" .. z .. "]"
     end
@@ -882,13 +908,13 @@ local function PublicRelay(kind,zone,author,level,class,timestamp,text)
     if #msg>240 then msg=msg:sub(1,240) end
 
     if DB.partyRelay and IsInGroup(LE_PARTY_CATEGORY_HOME) and not IsInRaid() then
-        SendChatMessage(msg,"PARTY")
+        SendRelayChat(msg,"PARTY")
     end
     if DB.raidRelay and IsInRaid() then
-        SendChatMessage(msg,"RAID")
+        SendRelayChat(msg,"RAID")
     end
     if DB.guildRelay and IsInGuild and IsInGuild() then
-        SendChatMessage(msg,"GUILD")
+        SendRelayChat(msg,"GUILD")
     end
 end
 
@@ -1078,7 +1104,7 @@ local function ReportConnectionStatus(message)
         if IsInRaid and IsInRaid() then
             channel = "RAID"
         end
-        SendChatMessage(message, channel)
+        SendRelayChat(message, channel)
     end
 end
 
@@ -1343,10 +1369,9 @@ local function HandlePayload(payload,senderID)
 
     RememberRemotePlayer(author, level, class)
 
-    -- Zone filtering applies to General/LocalDefense reports only. A direct
-    -- message is still relevant even when the Alliance and Horde characters
-    -- are in different zones.
-    if (kind=="GEN" or kind=="LD" or kind=="GUILD") and DB.onlyCurrentZone
+    -- Guild chat has no trustworthy speaker zone. Only zone-based channels
+    -- (General/LocalDefense) are subject to the current-zone filter.
+    if (kind=="GEN" or kind=="LD") and DB.onlyCurrentZone
        and zone ~= (GetRealZoneText and GetRealZoneText() or GetZoneText()) then
         return
     end
@@ -1472,6 +1497,18 @@ SlashCmdList["HORDERELAYDIAG"]=function(msg)
     Print("C_BattleNet.SendGameData="..tostring(C_BattleNet and C_BattleNet.SendGameData ~= nil))
     Print("learned Alliance senderID="..tostring(allianceSenderGameAccountID))
     Print("current Alliance broadcaster/SPY="..tostring(allianceSpyCharacterName))
+    Print("outputs: party="..tostring(DB.partyRelay).." raid="..tostring(DB.raidRelay)
+        .." guild="..tostring(DB.guildRelay))
+    Print("inGuild="..tostring(IsInGuild and IsInGuild() or false)
+        .." guildSource="..tostring(DB.relayGuild).." onlyCurrentZone="..tostring(DB.onlyCurrentZone))
+    local chatAPI = C_ChatInfo and type(C_ChatInfo.SendChatMessage)=="function"
+        and "C_ChatInfo.SendChatMessage" or (type(SendChatMessage)=="function" and "SendChatMessage" or "unavailable")
+    Print("chat API="..chatAPI)
+    for _,channel in ipairs({"PARTY","RAID","GUILD"}) do
+        if forwardingErrors[channel] then
+            Print(channel.." last forwarding error="..forwardingErrors[channel])
+        end
+    end
 end
 
 SLASH_HORDERELAYLOG1="/hrlog"

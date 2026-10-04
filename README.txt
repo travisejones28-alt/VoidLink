@@ -33,3 +33,8 @@ Receiver Settings > Output destinations > Forward to guild sends accepted relay 
 Chat sending prefers C_ChatInfo.SendChatMessage with legacy support. Each output is attempted independently; repeating Lua send errors are reported once until that output succeeds. /hrdiag shows selected outputs, guild membership, chat API availability, and any retained forwarding errors. A successful API call is not confirmation of server delivery.
 
 Offline routing regression: lua tests/guild_forwarding.lua (run from this folder). The mock checks receiver events and preferences; live server delivery and protected execution require in-game validation.
+
+PRIVATE FRIEND STATUS ALERTS (1.0.3)
+Update VoidLink on both clients. In Horde Receiver Settings > Relay types, enable Friend login/logout (off by default), then use the private VoidLink Chat window. The Alliance sender's Relay friend login/logout option is enabled by default. Ordinary WoW friends changing online/offline state produce a timestamped green "Name logged IN." or red "Name logged OUT." line. Battle.net friends are excluded.
+Friend alerts never enter normal chat, Party/Raid/Guild, archive/export, or alert sounds. Closed private windows retain notices in their scrollback without opening automatically. The first roster after login/reload is a silent baseline; adding/removing friends does not produce false login/logout notices. Only transitions observed while the spy is running and its relay is enabled/connected are sent; no offline history is replayed. Partial roster updates are ignored until complete.
+Friend status regression: lua tests/friend_status.lua (also runs the chat-routing regression).

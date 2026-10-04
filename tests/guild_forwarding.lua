@@ -31,11 +31,15 @@ function methods:GetName() return self.name end
 function methods:GetWidth() return 620 end
 function methods:GetHeight() return 260 end
 function methods:GetFrameLevel() return 1 end
-function methods:AddMessage(msg) state.chat[#state.chat+1]=msg end
+function methods:AddMessage(msg)
+    state.chat[#state.chat+1]=msg
+    self.messages=self.messages or {}; self.messages[#self.messages+1]=msg
+end
 function methods:SetChecked(value) self.checked=value end
 function methods:GetChecked() return self.checked end
-CreateFrame = function(_, name, parent, template)
+CreateFrame = function(kind, name, parent, template)
     local f=frame(name)
+    f.kind=kind
     f.parent=parent
     if template=='OptionsSliderTemplate' then
         for _,suffix in ipairs({'Low','High','Text'}) do frame(name..suffix) end
@@ -263,3 +267,4 @@ test('successful guild send clears retained failure',function()
 end)
 print(string.format('%d passed, %d failed',passed,failures))
 assert(failures==0,'guild-forwarding regression failed')
+return {state=state, emit=emit, noop=noop, receiverDB=DB, reset=reset}

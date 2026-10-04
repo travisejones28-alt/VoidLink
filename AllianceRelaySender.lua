@@ -32,6 +32,9 @@ local pendingWho = {}
 local RemovePendingWho
 local lastWhoScan = 0
 local scanBtn
+local friendSnapshot = nil
+local friendStatusReady = false
+local friendStatusSequence = 0
 
 local defaults = {
     enabled = true,
@@ -40,6 +43,7 @@ local defaults = {
     relayParty = true,
     relayGuild = true,
     relayWhispers = true,
+    relayFriendStatus = true, -- receiver's optional private-window alert decides visibility
     receiverGameAccountID = nil, -- legacy/primary mirror
     receivers = {},
 
@@ -532,6 +536,62 @@ local function QueuePayload(payload)
     end
     queue[#queue+1] = payload
     PumpQueue()
+end
+
+local function ReadStandardFriends()
+    local getCount = C_FriendList and C_FriendList.GetNumFriends or GetNumFriends
+    local getInfo = C_FriendList and C_FriendList.GetFriendInfoByIndex
+    if type(getCount) ~= "function" or (type(getInfo) ~= "function" and type(GetFriendInfo) ~= "function") then
+        return nil
+    end
+    local ok, count = pcall(getCount)
+    if not ok or type(count) ~= "number" or count < 0 then return nil end
+
+    local snapshot = {}
+    for i = 1, count do
+        local info
+        if type(getInfo) == "function" then
+            ok, info = pcall(getInfo, i)
+            if not ok or type(info) ~= "table" or type(info.connected) ~= "boolean" then return nil end
+        else
+            local name, level, class, area, connected
+            ok, name, level, class, area, connected = pcall(GetFriendInfo, i)
+            if not ok then return nil end
+            info = {name=name, connected=connected and true or false}
+        end
+        -- A partial roster is not a status change. Keep the last complete
+        -- snapshot until Blizzard supplies all entries again.
+        if type(info.name) ~= "string" or info.name == "" then return nil end
+        snapshot[info.name:lower()] = {name=info.name, online=info.connected}
+    end
+    return snapshot
+end
+
+local function UpdateFriendStatus()
+    if not friendStatusReady or UnitFactionGroup("player") ~= "Alliance" then return end
+    local current = ReadStandardFriends()
+    if not current then return end
+    local previous = friendSnapshot
+    friendSnapshot = current
+
+    -- Always keep the baseline current, including while disabled/disconnected.
+    -- First load, newly added friends, and removed friends produce no alert.
+    if not previous or not DB.enabled or not DB.relayFriendStatus or ReceiverCount(false) == 0 then return end
+    for key, info in pairs(current) do
+        local old = previous[key]
+        if old and old.online ~= info.online then
+            friendStatusSequence = friendStatusSequence + 1
+            -- Use a dedicated packet rather than an AM chat type. Older
+            -- receivers reject FS, so these notices can never be public chat.
+            local payload = table.concat({
+                "FS", info.online and "ONLINE" or "OFFLINE",
+                Clean(info.name):gsub("\031", " "), date("%H:%M:%S"),
+                Clean(UnitName("player") or "?"),
+                tostring(time())..":"..tostring(friendStatusSequence),
+            }, "\031")
+            QueuePayload(payload)
+        end
+    end
 end
 
 local function CacheWho(name, level, zone, class)
@@ -1170,6 +1230,12 @@ MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefens
 MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
 MakeCheck(cfg,"Ignore my own messages",220,-242,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
+MakeCheck(cfg,"Relay friend login/logout",20,-414,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
+local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+friendStatusHint:SetPoint("TOPLEFT",20,-448)
+friendStatusHint:SetWidth(410)
+friendStatusHint:SetJustifyH("LEFT")
+friendStatusHint:SetText("Regular WoW friends only. Alerts stay in the receiver's private window.")
 
 MakeCheck(cfg,"Include timestamp",220,-50,function() return DB.includeTimestamp end,function(v) DB.includeTimestamp=v end)
 MakeCheck(cfg,"Include zone",220,-82,function() return DB.includeZone end,function(v) DB.includeZone=v end)
@@ -1447,6 +1513,7 @@ SLASH_ALLIANCERELAYDIAG1="/ardiag"
 SlashCmdList["ALLIANCERELAYDIAG"]=function()
     Print("Sender diag:")
     Print("receivers="..ReceiverSummary())
+    Print("friend status relay="..tostring(DB.relayFriendStatus))
     Print("PREFIX="..PREFIX)
     if C_ChatInfo and C_ChatInfo.IsAddonMessagePrefixRegistered then
         Print("registered="..tostring(C_ChatInfo.IsAddonMessagePrefixRegistered(PREFIX)))
@@ -1478,6 +1545,7 @@ f:RegisterEvent("CHAT_MSG_CHANNEL")
 f:RegisterEvent("CHAT_MSG_PARTY")
 f:RegisterEvent("CHAT_MSG_PARTY_LEADER")
 f:RegisterEvent("CHAT_MSG_GUILD")
+f:RegisterEvent("FRIENDLIST_UPDATE")
 f:RegisterEvent("CHAT_MSG_WHISPER")
 f:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
 f:RegisterEvent("WHO_LIST_UPDATE")
@@ -1500,10 +1568,13 @@ f:SetScript("OnEvent",function(self,event,...)
             heartbeatTicker = nil
             if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
             receiverMonitorTicker = nil
+            friendStatusReady = false
+            friendSnapshot = nil
             self:UnregisterEvent("CHAT_MSG_CHANNEL")
             self:UnregisterEvent("CHAT_MSG_PARTY")
             self:UnregisterEvent("CHAT_MSG_PARTY_LEADER")
             self:UnregisterEvent("CHAT_MSG_GUILD")
+            self:UnregisterEvent("FRIENDLIST_UPDATE")
             self:UnregisterEvent("CHAT_MSG_WHISPER")
             self:UnregisterEvent("CHAT_MSG_WHISPER_INFORM")
             self:UnregisterEvent("WHO_LIST_UPDATE")
@@ -1529,6 +1600,11 @@ f:SetScript("OnEvent",function(self,event,...)
         end
         if launcher then launcher:Hide() end
         EnsureReceiverDB()
+        friendStatusReady = true
+        friendSnapshot = nil
+        UpdateFriendStatus()
+        local refreshFriends = C_FriendList and C_FriendList.ShowFriends or ShowFriends
+        if type(refreshFriends) == "function" then pcall(refreshFriends) end
         for _,r in ipairs(DB.receivers or {}) do r.lastAck=0 end
         RestartHeartbeat()
         if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
@@ -1554,6 +1630,11 @@ f:SetScript("OnEvent",function(self,event,...)
     -- Belt-and-suspenders faction lock. No runtime event from this sender is
     -- allowed to do work unless the current character is Alliance.
     if UnitFactionGroup("player") ~= "Alliance" then return end
+
+    if event=="FRIENDLIST_UPDATE" then
+        UpdateFriendStatus()
+        return
+    end
 
     if event=="BN_FRIEND_INFO_CHANGED" then
         if not pairing then

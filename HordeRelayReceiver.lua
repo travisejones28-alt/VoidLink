@@ -49,6 +49,7 @@ local defaults = {
     relayGuild=true,
     relayIncomingDM=true,
     relayOutgoingDM=true,
+    friendStatusAlerts=false, -- private-window notices only; never a public output
 
     -- Persistent spy-chat archive. Every Alliance spy relay packet is logged
     -- as soon as it reaches this receiver, before receiver display/output
@@ -438,7 +439,7 @@ win:SetScript("OnDragStop",function(self)
 end)
 
 local cfg=CreateFrame("Frame","HordeRelayConfig",UIParent,"BackdropTemplate")
-cfg:SetSize(540,720)
+cfg:SetSize(540,752)
 cfg:SetPoint("CENTER")
 cfg:SetFrameStrata("DIALOG")
 cfg:SetMovable(true)
@@ -493,18 +494,19 @@ MakeCheck(cfg,"Alliance guild",20,-134,function() return DB.relayGuild end,funct
 MakeCheck(cfg,"Party source",140,-134,function() return DB.relayPartySource end,function(v) DB.relayPartySource=v end)
 MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
 MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
+MakeCheck(cfg,"Friend login/logout",20,-230,function() return DB.friendStatusAlerts end,function(v) DB.friendStatusAlerts=v end)
 
 -- Output destinations. These decide WHERE enabled relay types are shown/sent.
 local destinationsLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
-destinationsLabel:SetPoint("TOPLEFT",20,-242)
+destinationsLabel:SetPoint("TOPLEFT",20,-274)
 destinationsLabel:SetText("Output destinations")
 
-MakeCheck(cfg,"Enable receiver",20,-264,function() return DB.enabled end,function(v) DB.enabled=v end)
-MakeCheck(cfg,"Private relay window",20,-296,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
-MakeCheck(cfg,"Normal chat",20,-328,function() return DB.printToChat end,function(v) DB.printToChat=v end)
-MakeCheck(cfg,"Party chat",20,-360,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
-MakeCheck(cfg,"Raid chat",20,-392,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
-MakeCheck(cfg,"Forward to guild",20,-424,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
+MakeCheck(cfg,"Enable receiver",20,-296,function() return DB.enabled end,function(v) DB.enabled=v end)
+MakeCheck(cfg,"Private relay window",20,-328,function() return DB.showWindow end,function(v) DB.showWindow=v; if v then win:Show() else win:Hide() end end)
+MakeCheck(cfg,"Normal chat",20,-360,function() return DB.printToChat end,function(v) DB.printToChat=v end)
+MakeCheck(cfg,"Party chat",20,-392,function() return DB.partyRelay end,function(v) DB.partyRelay=v end)
+MakeCheck(cfg,"Raid chat",20,-424,function() return DB.raidRelay end,function(v) DB.raidRelay=v end)
+MakeCheck(cfg,"Forward to guild",20,-456,function() return DB.guildRelay end,function(v) DB.guildRelay=v end)
 
 -- Formatting / behavior.
 local formattingLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -528,20 +530,20 @@ MakeCheck(cfg,"Lock relay window",270,-422,function() return DB.locked end,funct
 -- DM safety gate. Even with Incoming/Outgoing DMs enabled above, these remain
 -- OFF by default so whispers stay private to the receiver window / local chat.
 local dmSafetyLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
-dmSafetyLabel:SetPoint("TOPLEFT",20,-462)
+dmSafetyLabel:SetPoint("TOPLEFT",20,-494)
 dmSafetyLabel:SetText("DM public broadcast safety")
 
-MakeCheck(cfg,"Allow incoming DMs to Party/Raid/Guild",20,-484,function() return DB.broadcastIncomingDM end,function(v) DB.broadcastIncomingDM=v end)
-MakeCheck(cfg,"Allow outgoing DMs to Party/Raid/Guild",20,-516,function() return DB.broadcastOutgoingDM end,function(v) DB.broadcastOutgoingDM=v end)
+MakeCheck(cfg,"Allow incoming DMs to Party/Raid/Guild",20,-516,function() return DB.broadcastIncomingDM end,function(v) DB.broadcastIncomingDM=v end)
+MakeCheck(cfg,"Allow outgoing DMs to Party/Raid/Guild",20,-548,function() return DB.broadcastOutgoingDM end,function(v) DB.broadcastOutgoingDM=v end)
 MakeCheck(cfg,"Lost alert to myself",270,-454,function() return DB.connectionReportSelf end,function(v) DB.connectionReportSelf=v end)
 MakeCheck(cfg,"Lost alert to party/raid",270,-486,function() return DB.connectionReportParty end,function(v) DB.connectionReportParty=v end)
 
 local alphaLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
-alphaLabel:SetPoint("TOPLEFT",20,-555)
+alphaLabel:SetPoint("TOPLEFT",20,-587)
 alphaLabel:SetText("Background transparency")
 
 local alphaSlider=CreateFrame("Slider","HordeRelayBackgroundAlphaSlider",cfg,"OptionsSliderTemplate")
-alphaSlider:SetPoint("TOPLEFT",20,-583)
+alphaSlider:SetPoint("TOPLEFT",20,-615)
 alphaSlider:SetWidth(490)
 alphaSlider:SetMinMaxValues(0,100)
 alphaSlider:SetValueStep(5)
@@ -568,7 +570,7 @@ alphaSlider:SetScript("OnValueChanged",function(self,value)
 end)
 
 local preview=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlight")
-preview:SetPoint("TOPLEFT",20,-635)
+preview:SetPoint("TOPLEFT",20,-667)
 preview:SetWidth(500)
 preview:SetJustifyH("LEFT")
 preview:SetText("Example: (G) [RR] [Marker] Playername [Marker] (60) message")
@@ -1317,6 +1319,26 @@ local function HandlePayload(payload,senderID)
         return
     end
 
+    if p[1]=="FS" then
+        -- A dedicated private-window path: do not use the normal chat formatter,
+        -- archive/export, sound, or Party/Raid/Guild forwarding for these alerts.
+        if not DB.friendStatusAlerts then return end
+        local presence, name = p[2], p[3]
+        if (presence ~= "ONLINE" and presence ~= "OFFLINE")
+           or not name or name == "" or name == "?" then return end
+        local timestamp = p[4] or date("%H:%M:%S")
+        local online = presence == "ONLINE"
+        local color = online and "|cff66ff66" or "|cffff5555"
+        local line = "|cff888888["..timestamp.."]|r |cffffcc00[Spy friend]|r "
+            ..color..CleanOutgoing(name)..(online and " logged IN." or " logged OUT.").."|r"
+        -- Retain messages in the scrollback when the private window is closed.
+        -- Receiving an alert does not open the window automatically.
+        scroll:AddMessage(line)
+        AddHistory(line)
+        status:SetText(timestamp.." friend "..presence:lower())
+        return
+    end
+
     -- Only accept relay chat packets created by the faction-locked Alliance
     -- sender. Legacy "M" packets are intentionally rejected because an old
     -- sender loaded on a Horde client could forward Horde General/LD chat.
@@ -1501,6 +1523,7 @@ SlashCmdList["HORDERELAYDIAG"]=function(msg)
         .." guild="..tostring(DB.guildRelay))
     Print("inGuild="..tostring(IsInGuild and IsInGuild() or false)
         .." guildSource="..tostring(DB.relayGuild).." onlyCurrentZone="..tostring(DB.onlyCurrentZone))
+    Print("private friend status alerts="..tostring(DB.friendStatusAlerts))
     local chatAPI = C_ChatInfo and type(C_ChatInfo.SendChatMessage)=="function"
         and "C_ChatInfo.SendChatMessage" or (type(SendChatMessage)=="function" and "SendChatMessage" or "unavailable")
     Print("chat API="..chatAPI)

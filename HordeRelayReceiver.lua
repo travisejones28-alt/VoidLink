@@ -11,7 +11,7 @@ local history = {}
 local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
-local remoteWhoState = { total=0, ganks=0, zone="", names={} }
+local remoteWhoState = { mode="", total=0, zone="", names={}, plainNames={}, shown=0 }
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -961,10 +961,12 @@ local WHO_ZONE_OPTIONS = {
     {label="Thousand Needles (1K)", query="1K"},
 }
 
+local AddWhoOutput
+
 local function SendRemoteWhoQuery(query)
     query=tostring(query or ""):match("^%s*(.-)%s*$") or ""
     if query=="" then
-        AddWhoOutput("|cffff7777WHO:|r Select a zone or use /rwho RR")
+        AddWhoOutput("|cffff7777WHO:|r Use: who RR, who Wetlands, or who Playername")
         return
     end
 
@@ -973,7 +975,7 @@ local function SendRemoteWhoQuery(query)
         return
     end
 
-    local payload=table.concat({"WQ",query},"\031")
+    local payload=table.concat({"WQ",query,tostring(OwnGameAccountID() or "")},"\031")
     local ok,result
 
     -- Pairing works through the legacy BNet API on Classic Era, so WHO
@@ -1010,10 +1012,54 @@ UIDropDownMenu_Initialize(whoZoneDropdown,function(self,level)
     end
 end)
 
-local function AddWhoOutput(line)
+AddWhoOutput=function(line)
     scroll:AddMessage(line)
     if DB.whoResultsToChat then
         DEFAULT_CHAT_FRAME:AddMessage(line)
+    end
+end
+
+local function PublishWhoResult(localLine,publicLine)
+    scroll:AddMessage(localLine)
+
+    local sent=false
+    publicLine=CleanOutgoing(publicLine or "")
+    if #publicLine>240 then publicLine=publicLine:sub(1,240) end
+
+    if DB.partyRelay and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) and not (IsInRaid and IsInRaid()) then
+        SendRelayChat(publicLine,"PARTY")
+        sent=true
+    end
+    if DB.raidRelay and IsInRaid and IsInRaid() then
+        SendRelayChat(publicLine,"RAID")
+        sent=true
+    end
+    if DB.guildRelay and IsInGuild and IsInGuild() then
+        SendRelayChat(publicLine,"GUILD")
+        sent=true
+    end
+
+    -- If no selected broadcast destination is currently usable, WHO is a
+    -- private/system result on the receiver.
+    if not sent then
+        DEFAULT_CHAT_FRAME:AddMessage(localLine)
+    end
+end
+
+local function PublishWhoNames()
+    if #remoteWhoState.names==0 then return end
+
+    local localChunk,plainChunk={},{}
+    for i=1,#remoteWhoState.names do
+        localChunk[#localChunk+1]=remoteWhoState.names[i]
+        plainChunk[#plainChunk+1]=remoteWhoState.plainNames[i] or "?"
+        if #localChunk==5 or i==#remoteWhoState.names then
+            PublishWhoResult(
+                table.concat(localChunk,", "),
+                "[WHO] "..table.concat(plainChunk,", ")
+            )
+            localChunk,plainChunk={},{}
+        end
     end
 end
 
@@ -1021,24 +1067,82 @@ local function HandleRemoteWhoResponse(p)
     local subtype=p[2]
 
     if subtype=="Q" then
-        local zone=p[3] or "?"
-        AddWhoOutput("|cffffcc00WHO DB|r "..zone..": no cache yet.")
-        AddWhoOutput("|cffaaaaaaAlliance WHO scan queued — click Scan WHO on Alliance.|r")
+        local kind=p[3] or "?"
+        local value=p[4] or "?"
+        local what=kind=="zone" and ("level 60s in "..value) or ("player "..value)
+        AddWhoOutput("|cffffcc00WHO queued:|r "..what.." — click |cff66ff66Run WHO|r on the Alliance sender.")
         return
     end
 
+    if subtype=="ZH" then
+        local zone=p[3] or "?"
+        local total=tonumber(p[4] or "0") or 0
+        local shown=tonumber(p[5] or "0") or 0
+        remoteWhoState={mode="zone",total=total,zone=zone,names={},plainNames={},shown=shown}
+        return
+    end
+
+    if subtype=="ZP" then
+        local name=p[3] or "?"
+        local class=p[4] or ""
+        local zone=p[5] or remoteWhoState.zone
+        RememberRemotePlayer(name,60,class)
+        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).." ("..tostring(class~="" and class or "?")..")"
+        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).." ("..tostring(class~="" and class or "?")..")"
+        return
+    end
+
+    if subtype=="ZT" then
+        local total=tonumber(remoteWhoState.total) or 0
+        local zone=remoteWhoState.zone~="" and remoteWhoState.zone or "?"
+        PublishWhoResult(
+            "|cff66ff66WHO|r "..zone..": |cffffffff"..tostring(total).."|r level 60"..(total==1 and "" or "s"),
+            "[WHO] "..zone..": "..tostring(total).." level 60"..(total==1 and "" or "s")
+        )
+        PublishWhoNames()
+        if p[3] and p[3]~="" then
+            PublishWhoResult("|cffaaaaaa"..tostring(p[3]).."|r","[WHO] "..tostring(p[3]))
+        end
+        return
+    end
+
+    if subtype=="PL" then
+        local name=p[3] or "?"
+        local level=tonumber(p[4] or "")
+        local class=p[5] or "?"
+        local zone=p[6] or "?"
+        RememberRemotePlayer(name,level,class)
+        local localLine="|cff66ff66WHO|r "..ColorName(name,class)
+            .." — Lv"..tostring(level or "?").." "..tostring(class).." — "..tostring(zone)
+        local publicLine="[WHO] "..BareName(name)
+            .." — Lv"..tostring(level or "?").." "..tostring(class).." — "..tostring(zone)
+        PublishWhoResult(localLine,publicLine)
+        return
+    end
+
+    if subtype=="PN" then
+        local name=p[3] or "?"
+        PublishWhoResult(
+            "|cffff7777WHO|r "..tostring(name)..": not found / offline.",
+            "[WHO] "..tostring(name)..": not found / offline."
+        )
+        return
+    end
+
+    -- Backward compatibility with older cache-response packets.
     if subtype=="0" then
         local normalized=p[4] or p[3] or "?"
-        AddWhoOutput("|cffff7777WHO DB|r "..normalized..": no cached players found.")
-        remoteWhoState={total=0,ganks=0,zone=normalized,names={}}
+        PublishWhoResult(
+            "|cffff7777WHO DB|r "..normalized..": no cached players found.",
+            "[WHO] "..normalized..": no cached players found."
+        )
         return
     end
 
     if subtype=="H" then
         local normalized=p[4] or p[3] or "?"
         local count=tonumber(p[5] or "0") or 0
-        remoteWhoState={total=count,ganks=0,zone=normalized,names={}}
-        AddWhoOutput("|cff66ff66WHO DB|r "..normalized.." ("..count.." cached)")
+        remoteWhoState={mode="legacy",total=count,zone=normalized,names={},plainNames={},shown=count}
         return
     end
 
@@ -1046,32 +1150,18 @@ local function HandleRemoteWhoResponse(p)
         local name=p[3] or "?"
         local level=tonumber(p[4] or "")
         local class=p[5] or ""
-        RememberRemotePlayer(name, level, class)
-        local displayName=ColorName(name,class)
-        local entry=displayName.." ("..ClassAbbr(class)..")"
-        table.insert(remoteWhoState.names,entry)
-        if level and level < 60 then
-            remoteWhoState.ganks=remoteWhoState.ganks+1
-        end
+        RememberRemotePlayer(name,level,class)
+        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).." ("..tostring(class~="" and class or "?")..")"
+        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).." ("..tostring(class~="" and class or "?")..")"
         return
     end
 
     if subtype=="T" then
-        if #remoteWhoState.names > 0 then
-            -- Print in chunks so long lists wrap sanely.
-            local chunk={}
-            for i,name in ipairs(remoteWhoState.names) do
-                chunk[#chunk+1]=name
-                if #chunk==5 or i==#remoteWhoState.names then
-                    AddWhoOutput(table.concat(chunk,", "))
-                    chunk={}
-                end
-            end
-        end
-        AddWhoOutput("|cffffcc00Ganks: "..tostring(remoteWhoState.ganks).."|r")
-        if p[3] and p[3]~="" then
-            AddWhoOutput("|cffaaaaaa"..tostring(p[3]).."|r")
-        end
+        PublishWhoResult(
+            "|cff66ff66WHO DB|r "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached",
+            "[WHO DB] "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached"
+        )
+        PublishWhoNames()
         return
     end
 end
@@ -1481,7 +1571,29 @@ end
 
 SLASH_REMOTEWHO1="/rwho"
 SlashCmdList["REMOTEWHO"]=function(msg)
-    Print("WHO lookup is disabled in this stable build.")
+    SendRemoteWhoQuery(msg)
+end
+
+local whoCommandEvents={
+    CHAT_MSG_SAY=true,
+    CHAT_MSG_YELL=true,
+    CHAT_MSG_PARTY=true,
+    CHAT_MSG_PARTY_LEADER=true,
+    CHAT_MSG_RAID=true,
+    CHAT_MSG_RAID_LEADER=true,
+    CHAT_MSG_GUILD=true,
+    CHAT_MSG_CHANNEL=true,
+}
+
+local function TryWhoChatCommand(text,senderName)
+    if BareName(senderName)~=BareName(UnitName("player")) then return false end
+    local trimmed=tostring(text or ""):match("^%s*(.-)%s*$") or ""
+    local cmd,arg=trimmed:match("^(%S+)%s+(.+)$")
+    if not cmd or cmd:lower()~="who" then return false end
+    arg=tostring(arg or ""):match("^%s*(.-)%s*$") or ""
+    if arg=="" then return false end
+    SendRemoteWhoQuery(arg)
+    return true
 end
 
 SLASH_HORDERELAYRESET1="/hrreset"
@@ -1595,6 +1707,9 @@ f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("BN_CHAT_MSG_ADDON")
 f:RegisterEvent("CHAT_MSG_ADDON")
 f:RegisterEvent("BN_FRIEND_INFO_CHANGED")
+for eventName in pairs(whoCommandEvents) do
+    f:RegisterEvent(eventName)
+end
 
 f:SetScript("OnEvent",function(self,event,...)
     if event=="ADDON_LOADED" then
@@ -1627,6 +1742,12 @@ f:SetScript("OnEvent",function(self,event,...)
     end
 
     if UnitFactionGroup("player") ~= "Horde" then
+        return
+    end
+
+    if whoCommandEvents[event] then
+        local text,senderName=...
+        TryWhoChatCommand(text,senderName)
         return
     end
 

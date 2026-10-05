@@ -34,9 +34,6 @@ local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
 local remoteWhoPromptStatus = nil
-local remoteWhoQuickBox = nil
-local remoteWhoQuickText = nil
-local remoteWhoQuickButton = nil
 local whoCache = {}
 local pendingWho = {}
 local RemovePendingWho
@@ -1281,7 +1278,6 @@ local function SendLiveRemoteWhoResults()
 
     ClearPendingRemoteWho()
     if remoteWhoPrompt then remoteWhoPrompt:Hide() end
-    if remoteWhoQuickBox then remoteWhoQuickBox:Hide() end
 end
 
 local function RunPendingRemoteWho()
@@ -1311,7 +1307,6 @@ local function RunPendingRemoteWho()
 
     if ok then
         if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Retry WHO") end
-        if remoteWhoQuickButton then remoteWhoQuickButton:SetText("RETRY WHO") end
         if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO sent. Waiting for results...") end
         Print("Receiver WHO: "..query)
     else
@@ -1369,61 +1364,6 @@ local function EnsureRemoteWhoPrompt()
     remoteWhoPromptStatus=statusLine
 end
 
-local function EnsureRemoteWhoQuickBox()
-    if remoteWhoQuickBox then return end
-
-    local box=CreateFrame("Frame","VoidLinkRemoteWhoQuickBox",UIParent,"BackdropTemplate")
-    box:SetSize(235,72)
-    box:SetFrameStrata("TOOLTIP")
-    box:SetClampedToScreen(true)
-    box:SetBackdrop({
-        bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",
-        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true,tileSize=16,edgeSize=12,
-        insets={left=4,right=4,top=4,bottom=4}
-    })
-    box:Hide()
-
-    local textLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-    textLine:SetPoint("TOP",0,-10)
-    textLine:SetWidth(215)
-    textLine:SetJustifyH("CENTER")
-
-    local run=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
-    run:SetSize(110,25)
-    run:SetPoint("BOTTOM",0,8)
-    run:SetText("RUN WHO")
-    run:SetScript("OnClick",RunPendingRemoteWho)
-
-    remoteWhoQuickBox=box
-    remoteWhoQuickText=textLine
-    remoteWhoQuickButton=run
-end
-
-local function PositionRemoteWhoQuickBox()
-    if not remoteWhoQuickBox then return end
-    local scale=UIParent:GetEffectiveScale()
-    local cx,cy=GetCursorPosition()
-    remoteWhoQuickBox:ClearAllPoints()
-    if scale and scale>0 and cx and cy then
-        remoteWhoQuickBox:SetPoint("CENTER",UIParent,"BOTTOMLEFT",cx/scale+125,cy/scale+35)
-    else
-        remoteWhoQuickBox:SetPoint("CENTER",UIParent,"CENTER",0,80)
-    end
-end
-
-local function ShowRemoteWhoQuickBox(kind,value)
-    EnsureRemoteWhoQuickBox()
-    remoteWhoQuickButton:SetText("RUN WHO")
-    if kind=="zone" then
-        remoteWhoQuickText:SetText("WHO "..tostring(value))
-    else
-        remoteWhoQuickText:SetText("WHO "..tostring(value))
-    end
-    PositionRemoteWhoQuickBox()
-    remoteWhoQuickBox:Show()
-end
-
 local function ShowRemoteWhoPrompt(kind,value)
     EnsureRemoteWhoPrompt()
     remoteWhoPromptButton:SetText("Run WHO")
@@ -1434,7 +1374,6 @@ local function ShowRemoteWhoPrompt(kind,value)
         remoteWhoPromptText:SetText("Receiver asks: find player "..tostring(value))
     end
     remoteWhoPrompt:Show()
-    ShowRemoteWhoQuickBox(kind,value)
 end
 
 local function SortedWhoResults(query)

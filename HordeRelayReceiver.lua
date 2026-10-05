@@ -1440,7 +1440,7 @@ local function HandlePayload(payload,senderID)
 
     if p[1]=="FS" then
         -- A dedicated private-window path: do not use the normal chat formatter,
-        -- archive/export, sound, or Party/Raid/Guild forwarding for these alerts.
+        -- archive/export, or Party/Raid/Guild forwarding for these alerts.
         if not DB.friendStatusAlerts then return end
         local presence, name = p[2], p[3]
         if (presence ~= "ONLINE" and presence ~= "OFFLINE")

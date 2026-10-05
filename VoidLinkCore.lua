@@ -228,7 +228,7 @@ local minimapButton = CreateFrame("Button","VoidLinkMinimapButton",Minimap)
 minimapButton:SetSize(31,31)
 minimapButton:SetFrameStrata("MEDIUM")
 minimapButton:SetFrameLevel(8)
-minimapButton:RegisterForClicks("LeftButtonUp")
+minimapButton:RegisterForClicks("LeftButtonUp","RightButtonUp")
 minimapButton:RegisterForDrag("LeftButton")
 minimapButton:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
@@ -319,7 +319,13 @@ minimapButton:SetScript("OnDragStop",function(self)
     self:SetScript("OnUpdate",nil)
 end)
 
-minimapButton:SetScript("OnClick",function()
+minimapButton:SetScript("OnClick",function(self,button)
+    if button=="RightButton" then
+        if _G.VoidLink_OpenReceiverWindow then
+            _G.VoidLink_OpenReceiverWindow()
+        end
+        return
+    end
     if panel:IsShown() then panel:Hide() else panel:Show() end
 end)
 
@@ -327,7 +333,8 @@ minimapButton:SetScript("OnEnter",function(self)
     GameTooltip:SetOwner(self,"ANCHOR_LEFT")
     GameTooltip:SetText("VoidLink")
     GameTooltip:AddLine("Mode: "..tostring(DB.mode),1,1,1)
-    GameTooltip:AddLine("Click: settings",0.8,0.8,0.8)
+    GameTooltip:AddLine("Left-click: settings",0.8,0.8,0.8)
+    GameTooltip:AddLine("Right-click: open chat",0.8,0.8,0.8)
     GameTooltip:AddLine("Drag: move icon",0.8,0.8,0.8)
     GameTooltip:Show()
 end)

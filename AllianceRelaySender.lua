@@ -25,8 +25,15 @@ local MAX_RECEIVERS = 2
 local receiverMonitorTicker = nil
 local lastAutoPairAt = 0
 local pairAcks = {}
-local pendingRemoteWhoZone = nil
+local pendingRemoteWhoZone = nil -- legacy internal scanner fallback
 local pendingRemoteWhoRequesterID = nil
+local pendingRemoteWhoKind = nil
+local pendingRemoteWhoValue = nil
+local pendingRemoteWhoRaw = nil
+local remoteWhoPrompt = nil
+local remoteWhoPromptText = nil
+local remoteWhoPromptButton = nil
+local remoteWhoPromptStatus = nil
 local whoCache = {}
 local pendingWho = {}
 local RemovePendingWho
@@ -140,11 +147,16 @@ end
 
 local REMOTE_ZONE_ALIASES = {
     ["rr"]="Redridge Mountains",
+    ["red"]="Redridge Mountains",
+    ["redr"]="Redridge Mountains",
     ["redridge"]="Redridge Mountains",
     ["redridge mountains"]="Redridge Mountains",
+    ["dw"]="Duskwood",
     ["dusk"]="Duskwood",
     ["duskwood"]="Duskwood",
     ["wet"]="Wetlands",
+    ["wl"]="Wetlands",
+    ["wetl"]="Wetlands",
     ["wetlands"]="Wetlands",
     ["stv"]="Stranglethorn Vale",
     ["stranglethorn"]="Stranglethorn Vale",
@@ -206,6 +218,36 @@ local function NormalizeRemoteZone(query)
     local q=tostring(query or ""):lower()
     q=q:match("^%s*(.-)%s*$") or q
     return REMOTE_ZONE_ALIASES[q] or tostring(query or "")
+end
+
+-- Resolve loose receiver input. Exact/common aliases win first; otherwise a
+-- unique zone-name/alias prefix is treated as a zone. Anything ambiguous or
+-- unknown falls back to a player-name WHO lookup.
+local function ResolveRemoteWhoTarget(query)
+    local raw=tostring(query or ""):match("^%s*(.-)%s*$") or ""
+    local q=raw:lower()
+    if q=="" then return nil,nil end
+
+    local exact=REMOTE_ZONE_ALIASES[q]
+    if exact then return "zone",exact end
+
+    if #q >= 3 then
+        local matches={}
+        for alias,zone in pairs(REMOTE_ZONE_ALIASES) do
+            local zl=tostring(zone):lower()
+            if alias:sub(1,#q)==q or zl:sub(1,#q)==q then
+                matches[zone]=true
+            end
+        end
+        local found,count=nil,0
+        for zone in pairs(matches) do
+            found=zone
+            count=count+1
+        end
+        if count==1 then return "zone",found end
+    end
+
+    return "player",raw
 end
 
 local function Clean(s)
@@ -1106,6 +1148,187 @@ local function HandleRemoteWhoQuery(query, requesterID)
     end
 end
 
+local function GetRemoteWhoInfo(index)
+    if C_FriendList and C_FriendList.GetWhoInfo then
+        local info=C_FriendList.GetWhoInfo(index)
+        if not info then return nil end
+        return info.fullName or info.name, tonumber(info.level), info.classStr or info.class,
+            info.area or info.zone
+    end
+    if GetWhoInfo then
+        local name,_,level,_,class,zone=GetWhoInfo(index)
+        return name,tonumber(level),class,zone
+    end
+end
+
+local function GetRemoteWhoCounts()
+    if C_FriendList and C_FriendList.GetNumWhoResults then
+        local shown,total=C_FriendList.GetNumWhoResults()
+        return tonumber(shown) or 0, tonumber(total) or tonumber(shown) or 0
+    end
+    if GetNumWhoResults then
+        local shown,total=GetNumWhoResults()
+        return tonumber(shown) or 0, tonumber(total) or tonumber(shown) or 0
+    end
+    return 0,0
+end
+
+local function ClearPendingRemoteWho()
+    pendingRemoteWhoKind=nil
+    pendingRemoteWhoValue=nil
+    pendingRemoteWhoRaw=nil
+    pendingRemoteWhoRequesterID=nil
+end
+
+local function SendLiveRemoteWhoResults()
+    local kind=pendingRemoteWhoKind
+    local value=pendingRemoteWhoValue
+    local requesterID=pendingRemoteWhoRequesterID
+    if not kind or not value or not requesterID then return end
+
+    local shown,total=GetRemoteWhoCounts()
+    local matches={}
+    local wantName=StripRealm(value):lower()
+
+    for i=1,shown do
+        local name,level,class,zone=GetRemoteWhoInfo(i)
+        if name then
+            if kind=="zone" then
+                if tonumber(level)==60 and tostring(zone or "")==value then
+                    matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or value}
+                end
+            elseif StripRealm(name):lower()==wantName then
+                matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or ""}
+            end
+        end
+    end
+
+    if kind=="zone" then
+        local total60=math.max(tonumber(total) or 0,#matches)
+        SendBNToID(requesterID,table.concat({
+            "WR","ZH",Clean(value),tostring(total60),tostring(#matches)
+        },"\031"))
+
+        for _,info in ipairs(matches) do
+            SendBNToID(requesterID,table.concat({
+                "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
+            },"\031"))
+        end
+
+        local tail=""
+        if total60>#matches then
+            tail="Showing "..tostring(#matches).." of "..tostring(total60).." returned players."
+        end
+        SendBNToID(requesterID,table.concat({"WR","ZT",tail},"\031"))
+    else
+        local info=matches[1]
+        if info then
+            SendBNToID(requesterID,table.concat({
+                "WR","PL",Clean(info.name),Clean(info.level or ""),Clean(info.class),Clean(info.zone)
+            },"\031"))
+        else
+            SendBNToID(requesterID,table.concat({"WR","PN",Clean(value)},"\031"))
+        end
+    end
+
+    ClearPendingRemoteWho()
+    if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+end
+
+local function RunPendingRemoteWho()
+    if not pendingRemoteWhoKind or not pendingRemoteWhoValue then return end
+
+    if C_FriendList and C_FriendList.SetWhoToUi then
+        pcall(C_FriendList.SetWhoToUi,true)
+    elseif SetWhoToUI then
+        pcall(SetWhoToUI,1)
+    end
+
+    local query
+    if pendingRemoteWhoKind=="zone" then
+        query='z-"'..pendingRemoteWhoValue..'" 60-60'
+    else
+        query='n-"'..pendingRemoteWhoValue..'"'
+    end
+
+    local ok,err=false,"WHO API unavailable"
+    if C_FriendList and C_FriendList.SendWho then
+        ok,err=pcall(C_FriendList.SendWho,query)
+    elseif SendWho then
+        ok,err=pcall(SendWho,query)
+    end
+
+    if ok then
+        if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Retry WHO") end
+        if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO sent. Waiting for results...") end
+        Print("Receiver WHO: "..query)
+    else
+        if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO failed: "..tostring(err)) end
+        Print("Receiver WHO failed: "..tostring(err))
+    end
+end
+
+local function EnsureRemoteWhoPrompt()
+    if remoteWhoPrompt then return end
+
+    local box=CreateFrame("Frame","VoidLinkRemoteWhoPrompt",UIParent,"BackdropTemplate")
+    box:SetSize(390,150)
+    box:SetPoint("CENTER",0,180)
+    box:SetFrameStrata("DIALOG")
+    box:SetClampedToScreen(true)
+    box:SetBackdrop({
+        bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true,tileSize=16,edgeSize=14,
+        insets={left=4,right=4,top=4,bottom=4}
+    })
+    box:Hide()
+
+    local title=box:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
+    title:SetPoint("TOP",0,-14)
+    title:SetText("VoidLink WHO Request")
+
+    local textLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+    textLine:SetPoint("TOPLEFT",18,-46)
+    textLine:SetWidth(354)
+    textLine:SetJustifyH("LEFT")
+
+    local statusLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    statusLine:SetPoint("TOPLEFT",18,-75)
+    statusLine:SetWidth(354)
+    statusLine:SetJustifyH("LEFT")
+    statusLine:SetText("Click Run WHO to perform the live query.")
+
+    local run=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
+    run:SetSize(120,26)
+    run:SetPoint("BOTTOMLEFT",18,15)
+    run:SetText("Run WHO")
+    run:SetScript("OnClick",RunPendingRemoteWho)
+
+    local close=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
+    close:SetSize(80,26)
+    close:SetPoint("BOTTOMRIGHT",-18,15)
+    close:SetText("Close")
+    close:SetScript("OnClick",function() box:Hide() end)
+
+    remoteWhoPrompt=box
+    remoteWhoPromptText=textLine
+    remoteWhoPromptButton=run
+    remoteWhoPromptStatus=statusLine
+end
+
+local function ShowRemoteWhoPrompt(kind,value)
+    EnsureRemoteWhoPrompt()
+    remoteWhoPromptButton:SetText("Run WHO")
+    remoteWhoPromptStatus:SetText("Click Run WHO to query live players.")
+    if kind=="zone" then
+        remoteWhoPromptText:SetText("Receiver asks: level 60s in "..tostring(value))
+    else
+        remoteWhoPromptText:SetText("Receiver asks: find player "..tostring(value))
+    end
+    remoteWhoPrompt:Show()
+end
+
 local function SortedWhoResults(query)
     query = tostring(query or ""):lower()
     local out = {}
@@ -1694,40 +1917,26 @@ f:SetScript("OnEvent",function(self,event,...)
                 return
             end
 
-            -- Remote WHO query handling from previous versions.
+            -- Live WHO request from the Horde receiver. SendWho is hardware
+            -- protected, so queue the request and show a dedicated click box.
             if p[1]=="WQ" then
                 local query=p[2] or ""
-                local zone=NormalizeRemoteZone(query)
+                local requesterID=senderID or tonumber(p[3])
+                local kind,value=ResolveRemoteWhoTarget(query)
 
-                -- First return anything already cached.
-                local found=false
-                for _,info in pairs(whoCache) do
-                    if tostring(info.zone or "")==zone then
-                        found=true
-                        break
-                    end
+                if not requesterID or not kind or not value or value=="" then
+                    return
                 end
 
-                if found then
-                    SendRemoteWhoDatabaseResults(query,senderID)
-                else
-                    pendingRemoteWhoZone=zone
-                    pendingRemoteWhoRequesterID=senderID
-                    if scanBtn then
-                        scanBtn:SetText("Scan "..(ZONE_ABBR and ZONE_ABBR[zone] or zone))
-                    end
+                pendingRemoteWhoZone=nil
+                pendingRemoteWhoKind=kind
+                pendingRemoteWhoValue=value
+                pendingRemoteWhoRaw=query
+                pendingRemoteWhoRequesterID=requesterID
 
-                    local waitPayload=table.concat({
-                        "WR","Q",Clean(zone),
-                        "No cache. Alliance WHO scan queued."
-                    },"\031")
-                    if BNSendGameData then
-                        pcall(BNSendGameData,tonumber(senderID),PREFIX,waitPayload)
-                    elseif C_BattleNet and C_BattleNet.SendGameData then
-                        pcall(C_BattleNet.SendGameData,tonumber(senderID),PREFIX,waitPayload)
-                    end
-                    Print("Horde requested WHO for "..zone..". Click Scan WHO.")
-                end
+                ShowRemoteWhoPrompt(kind,value)
+                SendBNToID(requesterID,table.concat({"WR","Q",kind,Clean(value)},"\031"))
+                Print("Horde requested WHO: "..(kind=="zone" and ("60s in "..value) or ("player "..value))..".")
                 return
             end
         end
@@ -1743,7 +1952,11 @@ f:SetScript("OnEvent",function(self,event,...)
             SyncScannerToRelayCache()
         end)
 
-        if pendingRemoteWhoZone and pendingRemoteWhoRequesterID then
+        if pendingRemoteWhoKind and pendingRemoteWhoRequesterID then
+            -- WHO_LIST_UPDATE completes the receiver's hardware-clicked live query.
+            C_Timer.After(0.05,SendLiveRemoteWhoResults)
+        elseif pendingRemoteWhoZone and pendingRemoteWhoRequesterID then
+            -- Legacy fallback retained for older queued zone scans.
             local zone=pendingRemoteWhoZone
             local requester=pendingRemoteWhoRequesterID
             pendingRemoteWhoZone=nil

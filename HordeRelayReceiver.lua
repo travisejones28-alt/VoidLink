@@ -1455,6 +1455,10 @@ local function HandlePayload(payload,senderID)
         scroll:AddMessage(line)
         AddHistory(line)
         status:SetText(timestamp.." friend "..presence:lower())
+        -- Audible cue for both friend login and logout alerts.
+        if PlaySound and SOUNDKIT and SOUNDKIT.TELL_MESSAGE then
+            pcall(PlaySound,SOUNDKIT.TELL_MESSAGE,"Master")
+        end
         return
     end
 

@@ -1102,8 +1102,9 @@ local function HandleRemoteWhoResponse(p)
         local class=p[4] or ""
         local zone=p[5] or remoteWhoState.zone
         RememberRemotePlayer(name,60,class)
-        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).." ("..tostring(class~="" and class or "?")..")"
-        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).." ("..tostring(class~="" and class or "?")..")"
+        local shortClass=ClassAbbr(class)
+        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
         return
     end
 
@@ -1136,10 +1137,13 @@ local function HandleRemoteWhoResponse(p)
         local class=p[5] or "?"
         local zone=p[6] or "?"
         RememberRemotePlayer(name,level,class)
+        local shortClass=ClassAbbr(class)
         local localLine="|cff66ccff[WHO]|r "..ColorName(name,class)
-            .." | |cffffffffLv"..tostring(level or "?").." "..tostring(class).."|r | "..tostring(zone)
+            .."("..tostring(shortClass~="" and shortClass or "?")..")"
+            .." | |cffffffffLv"..tostring(level or "?").."|r | "..tostring(zone)
         local publicLine="[WHO] "..BareName(name)
-            .." | Lv"..tostring(level or "?").." "..tostring(class).." | "..tostring(zone)
+            .."("..tostring(shortClass~="" and shortClass or "?")..")"
+            .." | Lv"..tostring(level or "?").." | "..tostring(zone)
         PublishWhoResult(localLine,publicLine)
         return
     end
@@ -1175,8 +1179,9 @@ local function HandleRemoteWhoResponse(p)
         local level=tonumber(p[4] or "")
         local class=p[5] or ""
         RememberRemotePlayer(name,level,class)
-        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).." ("..tostring(class~="" and class or "?")..")"
-        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).." ("..tostring(class~="" and class or "?")..")"
+        local shortClass=ClassAbbr(class)
+        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
         return
     end
 

@@ -1050,15 +1050,19 @@ local function PublishWhoNames()
     if #remoteWhoState.names==0 then return end
 
     local localChunk,plainChunk={},{}
+    local chunkNumber=1
     for i=1,#remoteWhoState.names do
         localChunk[#localChunk+1]=remoteWhoState.names[i]
         plainChunk[#plainChunk+1]=remoteWhoState.plainNames[i] or "?"
         if #localChunk==5 or i==#remoteWhoState.names then
+            local localPrefix=chunkNumber==1 and "|cff66ccff60s:|r " or "|cff888888   ↳|r "
+            local publicPrefix=chunkNumber==1 and "[WHO] 60s: " or "[WHO]      "
             PublishWhoResult(
-                table.concat(localChunk,", "),
-                "[WHO] "..table.concat(plainChunk,", ")
+                localPrefix..table.concat(localChunk,", "),
+                publicPrefix..table.concat(plainChunk,", ")
             )
             localChunk,plainChunk={},{}
+            chunkNumber=chunkNumber+1
         end
     end
 end
@@ -1069,8 +1073,8 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="Q" then
         local kind=p[3] or "?"
         local value=p[4] or "?"
-        local what=kind=="zone" and ("level 60s in "..value) or ("player "..value)
-        AddWhoOutput("|cffffcc00WHO queued:|r "..what.." — click |cff66ff66Run WHO|r on the Alliance sender.")
+        local what=kind=="zone" and value or value
+        AddWhoOutput("|cff66ccff[WHO]|r "..what.." queued — click |cff66ff66RUN WHO|r on sender.")
         return
     end
 
@@ -1107,13 +1111,21 @@ local function HandleRemoteWhoResponse(p)
         local noobs=tonumber(remoteWhoState.noobs) or 0
         local sixties=tonumber(remoteWhoState.sixties) or 0
         local zone=remoteWhoState.zone~="" and remoteWhoState.zone or "?"
-        PublishWhoResult(
-            "|cff66ff66WHO|r "..zone..": |cffffffff"..tostring(noobs).."|r noobs, |cffffffff"..tostring(sixties).."|r 60s",
-            "[WHO] "..zone..": "..tostring(noobs).." noobs, "..tostring(sixties).." 60s"
-        )
-        PublishWhoNames()
+        local capNote=""
         if p[3] and p[3]~="" then
-            PublishWhoResult("|cffaaaaaa"..tostring(p[3]).."|r","[WHO] "..tostring(p[3]))
+            capNote=" |cff888888(WHO capped; totals may be higher)|r"
+        end
+        local publicCap=(p[3] and p[3]~="") and " (WHO capped; totals may be higher)" or ""
+
+        PublishWhoResult(
+            "|cff66ccff[WHO]|r "..zone.." — |cffffcc00"..tostring(noobs).." noobs|r | |cff66ff66"..tostring(sixties).." level 60|r"..capNote,
+            "[WHO] "..zone.." — "..tostring(noobs).." noobs | "..tostring(sixties).." level 60"..publicCap
+        )
+
+        if sixties>0 then
+            PublishWhoNames()
+        else
+            PublishWhoResult("|cff66ccff60s:|r none","[WHO] 60s: none")
         end
         return
     end
@@ -1124,10 +1136,10 @@ local function HandleRemoteWhoResponse(p)
         local class=p[5] or "?"
         local zone=p[6] or "?"
         RememberRemotePlayer(name,level,class)
-        local localLine="|cff66ff66WHO|r "..ColorName(name,class)
-            .." — Lv"..tostring(level or "?").." "..tostring(class).." — "..tostring(zone)
+        local localLine="|cff66ccff[WHO]|r "..ColorName(name,class)
+            .." | |cffffffffLv"..tostring(level or "?").." "..tostring(class).."|r | "..tostring(zone)
         local publicLine="[WHO] "..BareName(name)
-            .." — Lv"..tostring(level or "?").." "..tostring(class).." — "..tostring(zone)
+            .." | Lv"..tostring(level or "?").." "..tostring(class).." | "..tostring(zone)
         PublishWhoResult(localLine,publicLine)
         return
     end
@@ -1135,8 +1147,8 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="PN" then
         local name=p[3] or "?"
         PublishWhoResult(
-            "|cffff7777WHO|r "..tostring(name)..": not found / offline.",
-            "[WHO] "..tostring(name)..": not found / offline."
+            "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777not found / offline|r",
+            "[WHO] "..tostring(name).." — not found / offline"
         )
         return
     end

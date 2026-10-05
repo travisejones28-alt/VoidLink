@@ -34,6 +34,9 @@ local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
 local remoteWhoPromptStatus = nil
+local remoteWhoQuickBox = nil
+local remoteWhoQuickText = nil
+local remoteWhoQuickButton = nil
 local whoCache = {}
 local pendingWho = {}
 local RemovePendingWho
@@ -1227,13 +1230,21 @@ local function SendLiveRemoteWhoResults()
     local shown,total=GetRemoteWhoCounts()
     local matches={}
     local wantName=StripRealm(value):lower()
+    local noobs=0
+    local sixties=0
 
     for i=1,shown do
         local name,level,class,zone=GetRemoteWhoInfo(i)
         if name then
             if kind=="zone" then
-                if tonumber(level)==60 and tostring(zone or "")==value then
-                    matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or value}
+                local lvl=tonumber(level)
+                if tostring(zone or "")==value then
+                    if lvl==60 then
+                        sixties=sixties+1
+                        matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or value}
+                    elseif lvl and lvl<60 then
+                        noobs=noobs+1
+                    end
                 end
             elseif StripRealm(name):lower()==wantName then
                 matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or ""}
@@ -1242,9 +1253,8 @@ local function SendLiveRemoteWhoResults()
     end
 
     if kind=="zone" then
-        local total60=math.max(tonumber(total) or 0,#matches)
         SendBNToID(requesterID,table.concat({
-            "WR","ZH",Clean(value),tostring(total60),tostring(#matches)
+            "WR","ZH",Clean(value),tostring(noobs),tostring(sixties),tostring(shown),tostring(total or shown)
         },"\031"))
 
         for _,info in ipairs(matches) do
@@ -1254,8 +1264,8 @@ local function SendLiveRemoteWhoResults()
         end
 
         local tail=""
-        if total60>#matches then
-            tail="Showing "..tostring(#matches).." of "..tostring(total60).." returned players."
+        if tonumber(total) and tonumber(total)>shown then
+            tail="WHO capped at "..tostring(shown).." visible results; zone totals may be higher."
         end
         SendBNToID(requesterID,table.concat({"WR","ZT",tail},"\031"))
     else
@@ -1271,6 +1281,7 @@ local function SendLiveRemoteWhoResults()
 
     ClearPendingRemoteWho()
     if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+    if remoteWhoQuickBox then remoteWhoQuickBox:Hide() end
 end
 
 local function RunPendingRemoteWho()
@@ -1284,7 +1295,9 @@ local function RunPendingRemoteWho()
 
     local query
     if pendingRemoteWhoKind=="zone" then
-        query='z-"'..pendingRemoteWhoValue..'" 60-60'
+        -- Query the whole zone so the receiver can report sub-60 "noobs"
+        -- separately from level 60s, then list the 60s by name/class.
+        query='z-"'..pendingRemoteWhoValue..'"'
     else
         query='n-"'..pendingRemoteWhoValue..'"'
     end
@@ -1298,6 +1311,7 @@ local function RunPendingRemoteWho()
 
     if ok then
         if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Retry WHO") end
+        if remoteWhoQuickButton then remoteWhoQuickButton:SetText("RETRY WHO") end
         if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO sent. Waiting for results...") end
         Print("Receiver WHO: "..query)
     else
@@ -1355,16 +1369,72 @@ local function EnsureRemoteWhoPrompt()
     remoteWhoPromptStatus=statusLine
 end
 
+local function EnsureRemoteWhoQuickBox()
+    if remoteWhoQuickBox then return end
+
+    local box=CreateFrame("Frame","VoidLinkRemoteWhoQuickBox",UIParent,"BackdropTemplate")
+    box:SetSize(235,72)
+    box:SetFrameStrata("TOOLTIP")
+    box:SetClampedToScreen(true)
+    box:SetBackdrop({
+        bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true,tileSize=16,edgeSize=12,
+        insets={left=4,right=4,top=4,bottom=4}
+    })
+    box:Hide()
+
+    local textLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    textLine:SetPoint("TOP",0,-10)
+    textLine:SetWidth(215)
+    textLine:SetJustifyH("CENTER")
+
+    local run=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
+    run:SetSize(110,25)
+    run:SetPoint("BOTTOM",0,8)
+    run:SetText("RUN WHO")
+    run:SetScript("OnClick",RunPendingRemoteWho)
+
+    remoteWhoQuickBox=box
+    remoteWhoQuickText=textLine
+    remoteWhoQuickButton=run
+end
+
+local function PositionRemoteWhoQuickBox()
+    if not remoteWhoQuickBox then return end
+    local scale=UIParent:GetEffectiveScale()
+    local cx,cy=GetCursorPosition()
+    remoteWhoQuickBox:ClearAllPoints()
+    if scale and scale>0 and cx and cy then
+        remoteWhoQuickBox:SetPoint("CENTER",UIParent,"BOTTOMLEFT",cx/scale+125,cy/scale+35)
+    else
+        remoteWhoQuickBox:SetPoint("CENTER",UIParent,"CENTER",0,80)
+    end
+end
+
+local function ShowRemoteWhoQuickBox(kind,value)
+    EnsureRemoteWhoQuickBox()
+    remoteWhoQuickButton:SetText("RUN WHO")
+    if kind=="zone" then
+        remoteWhoQuickText:SetText("WHO "..tostring(value))
+    else
+        remoteWhoQuickText:SetText("WHO "..tostring(value))
+    end
+    PositionRemoteWhoQuickBox()
+    remoteWhoQuickBox:Show()
+end
+
 local function ShowRemoteWhoPrompt(kind,value)
     EnsureRemoteWhoPrompt()
     remoteWhoPromptButton:SetText("Run WHO")
     remoteWhoPromptStatus:SetText("Click Run WHO to query live players.")
     if kind=="zone" then
-        remoteWhoPromptText:SetText("Receiver asks: level 60s in "..tostring(value))
+        remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." (noobs + 60s)")
     else
         remoteWhoPromptText:SetText("Receiver asks: find player "..tostring(value))
     end
     remoteWhoPrompt:Show()
+    ShowRemoteWhoQuickBox(kind,value)
 end
 
 local function SortedWhoResults(query)

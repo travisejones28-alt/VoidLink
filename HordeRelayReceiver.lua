@@ -1585,13 +1585,28 @@ local whoCommandEvents={
     CHAT_MSG_CHANNEL=true,
 }
 
-local function TryWhoChatCommand(text,senderName)
-    if BareName(senderName)~=BareName(UnitName("player")) then return false end
+local function TryWhoChatCommand(event,text,senderName)
+    local sender=BareName(senderName)
+    local selfName=BareName(UnitName("player"))
+    local isSelf=sender and selfName and sender==selfName
+
+    -- Your own "who ..." commands still work anywhere we listen. Other
+    -- players may trigger WHO only through actual Party/Raid chat events, so
+    -- random Say/General/Guild messages cannot queue scans on your sender.
+    local isGroupEvent=
+        event=="CHAT_MSG_PARTY"
+        or event=="CHAT_MSG_PARTY_LEADER"
+        or event=="CHAT_MSG_RAID"
+        or event=="CHAT_MSG_RAID_LEADER"
+
+    if not isSelf and not isGroupEvent then return false end
+
     local trimmed=tostring(text or ""):match("^%s*(.-)%s*$") or ""
     local cmd,arg=trimmed:match("^(%S+)%s+(.+)$")
     if not cmd or cmd:lower()~="who" then return false end
     arg=tostring(arg or ""):match("^%s*(.-)%s*$") or ""
     if arg=="" then return false end
+
     SendRemoteWhoQuery(arg)
     return true
 end
@@ -1747,7 +1762,7 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if whoCommandEvents[event] then
         local text,senderName=...
-        TryWhoChatCommand(text,senderName)
+        TryWhoChatCommand(event,text,senderName)
         return
     end
 

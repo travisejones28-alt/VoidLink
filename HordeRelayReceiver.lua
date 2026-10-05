@@ -11,7 +11,7 @@ local history = {}
 local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
-local remoteWhoState = { mode="", total=0, zone="", names={}, plainNames={}, shown=0 }
+local remoteWhoState = { mode="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -1076,9 +1076,20 @@ local function HandleRemoteWhoResponse(p)
 
     if subtype=="ZH" then
         local zone=p[3] or "?"
-        local total=tonumber(p[4] or "0") or 0
-        local shown=tonumber(p[5] or "0") or 0
-        remoteWhoState={mode="zone",total=total,zone=zone,names={},plainNames={},shown=shown}
+        local noobs=tonumber(p[4] or "0") or 0
+        local sixties=tonumber(p[5] or "0") or 0
+        local shown=tonumber(p[6] or "0") or 0
+        local total=tonumber(p[7] or tostring(shown)) or shown
+        remoteWhoState={
+            mode="zone",
+            noobs=noobs,
+            sixties=sixties,
+            zone=zone,
+            names={},
+            plainNames={},
+            shown=shown,
+            total=total
+        }
         return
     end
 
@@ -1093,11 +1104,12 @@ local function HandleRemoteWhoResponse(p)
     end
 
     if subtype=="ZT" then
-        local total=tonumber(remoteWhoState.total) or 0
+        local noobs=tonumber(remoteWhoState.noobs) or 0
+        local sixties=tonumber(remoteWhoState.sixties) or 0
         local zone=remoteWhoState.zone~="" and remoteWhoState.zone or "?"
         PublishWhoResult(
-            "|cff66ff66WHO|r "..zone..": |cffffffff"..tostring(total).."|r level 60"..(total==1 and "" or "s"),
-            "[WHO] "..zone..": "..tostring(total).." level 60"..(total==1 and "" or "s")
+            "|cff66ff66WHO|r "..zone..": |cffffffff"..tostring(noobs).."|r noobs, |cffffffff"..tostring(sixties).."|r 60s",
+            "[WHO] "..zone..": "..tostring(noobs).." noobs, "..tostring(sixties).." 60s"
         )
         PublishWhoNames()
         if p[3] and p[3]~="" then
@@ -1142,7 +1154,7 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="H" then
         local normalized=p[4] or p[3] or "?"
         local count=tonumber(p[5] or "0") or 0
-        remoteWhoState={mode="legacy",total=count,zone=normalized,names={},plainNames={},shown=count}
+        remoteWhoState={mode="legacy",total=count,noobs=0,sixties=0,zone=normalized,names={},plainNames={},shown=count}
         return
     end
 
@@ -1697,6 +1709,13 @@ end
 _G.VoidLink_OpenReceiverSettings=function()
     if UnitFactionGroup("player") ~= "Horde" then return end
     cfg:Show()
+end
+
+_G.VoidLink_OpenReceiverWindow=function()
+    if UnitFactionGroup("player") ~= "Horde" then return end
+    DB.showWindow=true
+    Restore()
+    win:Show()
 end
 
 _G.VoidLink_ToggleReceiverWindow=function()

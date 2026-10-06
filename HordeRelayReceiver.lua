@@ -11,7 +11,7 @@ local history = {}
 local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
-local remoteWhoState = { mode="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
+local remoteWhoState = { mode="", filter="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -966,7 +966,7 @@ local AddWhoOutput
 local function SendRemoteWhoQuery(query)
     query=tostring(query or ""):match("^%s*(.-)%s*$") or ""
     if query=="" then
-        AddWhoOutput("|cffff7777WHO:|r Use: who RR, who Wetlands, or who Playername")
+        AddWhoOutput("|cffff7777WHO:|r Use: who RR, who RR 60, or who Playername")
         return
     end
 
@@ -990,7 +990,7 @@ local function SendRemoteWhoQuery(query)
     end
 
     if ok then
-        AddWhoOutput("|cffaaaaaaWHO request sent: "..query.."|r")
+        AddWhoOutput("|cff888888WHO > "..query.."|r")
     else
         AddWhoOutput("|cffff7777WHO query failed:|r "..tostring(result))
     end
@@ -1049,14 +1049,19 @@ end
 local function PublishWhoNames()
     if #remoteWhoState.names==0 then return end
 
+    local zoneLabel=AbbrevZone(remoteWhoState.zone or "?")
     local localChunk,plainChunk={},{}
     local chunkNumber=1
     for i=1,#remoteWhoState.names do
         localChunk[#localChunk+1]=remoteWhoState.names[i]
         plainChunk[#plainChunk+1]=remoteWhoState.plainNames[i] or "?"
         if #localChunk==5 or i==#remoteWhoState.names then
-            local localPrefix=chunkNumber==1 and "|cff66ccff60s:|r " or "|cff888888   ↳|r "
-            local publicPrefix=chunkNumber==1 and "[WHO] 60s: " or "[WHO]      "
+            local localPrefix=chunkNumber==1
+                and ("|cff66ccff[WHO]|r |cffffffff"..zoneLabel.." 60s:|r ")
+                or "|cff888888   ↳ |r"
+            local publicPrefix=chunkNumber==1
+                and ("[WHO] "..zoneLabel.." 60s: ")
+                or "[WHO]   "
             PublishWhoResult(
                 localPrefix..table.concat(localChunk,", "),
                 publicPrefix..table.concat(plainChunk,", ")
@@ -1073,8 +1078,13 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="Q" then
         local kind=p[3] or "?"
         local value=p[4] or "?"
-        local what=kind=="zone" and value or value
-        AddWhoOutput("|cff66ccff[WHO]|r "..what.." queued — click |cff66ff66RUN WHO|r on sender.")
+        local filter=p[5] or ""
+        local what=kind=="zone" and AbbrevZone(value) or value
+        if kind=="zone" and filter=="60" then
+            AddWhoOutput("|cff66ccff[WHO]|r "..what.." 60 queued — click |cff66ff66RUN WHO|r on sender.")
+        else
+            AddWhoOutput("|cff66ccff[WHO]|r "..what.." queued — click |cff66ff66RUN WHO|r on sender.")
+        end
         return
     end
 
@@ -1084,8 +1094,10 @@ local function HandleRemoteWhoResponse(p)
         local sixties=tonumber(p[5] or "0") or 0
         local shown=tonumber(p[6] or "0") or 0
         local total=tonumber(p[7] or tostring(shown)) or shown
+        local filter=p[8] or ""
         remoteWhoState={
             mode="zone",
+            filter=filter,
             noobs=noobs,
             sixties=sixties,
             zone=zone,
@@ -1112,21 +1124,30 @@ local function HandleRemoteWhoResponse(p)
         local noobs=tonumber(remoteWhoState.noobs) or 0
         local sixties=tonumber(remoteWhoState.sixties) or 0
         local zone=remoteWhoState.zone~="" and remoteWhoState.zone or "?"
+        local zoneLabel=AbbrevZone(zone)
         local capNote=""
         if p[3] and p[3]~="" then
-            capNote=" |cff888888(WHO capped; totals may be higher)|r"
+            capNote=" |cff888888(capped; totals may be higher)|r"
         end
-        local publicCap=(p[3] and p[3]~="") and " (WHO capped; totals may be higher)" or ""
+        local publicCap=(p[3] and p[3]~="") and " (capped; totals may be higher)" or ""
+
+        -- "who RR 60" is deliberately count-only: one clean result line,
+        -- no noob count and no player-name dump.
+        if remoteWhoState.filter=="60" then
+            PublishWhoResult(
+                "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r — |cff66ff66"..tostring(sixties).." level 60"..(sixties==1 and "" or "s").."|r",
+                "[WHO] "..zoneLabel..": "..tostring(sixties).." level 60"..(sixties==1 and "" or "s")
+            )
+            return
+        end
 
         PublishWhoResult(
-            "|cff66ccff[WHO]|r "..zone.." — |cffffcc00"..tostring(noobs).." noobs|r | |cff66ff66"..tostring(sixties).." level 60|r"..capNote,
-            "[WHO] "..zone.." — "..tostring(noobs).." noobs | "..tostring(sixties).." level 60"..publicCap
+            "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r — |cffffcc00"..tostring(noobs).." noobs|r • |cff66ff66"..tostring(sixties).." 60s|r"..capNote,
+            "[WHO] "..zoneLabel..": "..tostring(noobs).." noobs | "..tostring(sixties).." 60s"..publicCap
         )
 
         if sixties>0 then
             PublishWhoNames()
-        else
-            PublishWhoResult("|cff66ccff60s:|r none","[WHO] 60s: none")
         end
         return
     end
@@ -1170,7 +1191,7 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="H" then
         local normalized=p[4] or p[3] or "?"
         local count=tonumber(p[5] or "0") or 0
-        remoteWhoState={mode="legacy",total=count,noobs=0,sixties=0,zone=normalized,names={},plainNames={},shown=count}
+        remoteWhoState={mode="legacy",filter="",total=count,noobs=0,sixties=0,zone=normalized,names={},plainNames={},shown=count}
         return
     end
 

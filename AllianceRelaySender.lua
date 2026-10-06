@@ -35,6 +35,9 @@ local pendingRemoteWhoSourceName = nil
 local pendingRemoteWhoSourceLabel = nil
 local pendingRemoteWhoToken = 0
 local remoteWhoRequestQueue = {}
+local ActivateNextRemoteWho
+local FinishActiveRemoteWho
+local RemoteWhoQueueCount
 local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
@@ -1376,10 +1379,7 @@ local function RunPendingRemoteWho()
     end
 end
 
-local ActivateNextRemoteWho
-local FinishActiveRemoteWho
-
-local function RemoteWhoQueueCount()
+RemoteWhoQueueCount=function()
     return #remoteWhoRequestQueue
 end
 

@@ -31,6 +31,10 @@ local pendingRemoteWhoKind = nil
 local pendingRemoteWhoValue = nil
 local pendingRemoteWhoRaw = nil
 local pendingRemoteWhoFilter = nil
+local pendingRemoteWhoSourceName = nil
+local pendingRemoteWhoSourceLabel = nil
+local pendingRemoteWhoToken = 0
+local remoteWhoRequestQueue = {}
 local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
@@ -1251,6 +1255,8 @@ local function ClearPendingRemoteWho()
     pendingRemoteWhoRaw=nil
     pendingRemoteWhoFilter=nil
     pendingRemoteWhoRequesterID=nil
+    pendingRemoteWhoSourceName=nil
+    pendingRemoteWhoSourceLabel=nil
 end
 
 local function SendLiveRemoteWhoResults()
@@ -1324,8 +1330,7 @@ local function SendLiveRemoteWhoResults()
         end
     end
 
-    ClearPendingRemoteWho()
-    if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+    FinishActiveRemoteWho(nil)
 end
 
 local function RunPendingRemoteWho()
@@ -1359,8 +1364,11 @@ local function RunPendingRemoteWho()
     end
 
     if ok then
-        if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Retry WHO") end
-        if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO sent. Waiting for results...") end
+        if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Waiting...") end
+        if remoteWhoPromptStatus then
+            local queued=RemoteWhoQueueCount()
+            remoteWhoPromptStatus:SetText("WHO sent • waiting for results"..(queued>0 and (" • "..tostring(queued).." queued") or ""))
+        end
         Print("Receiver WHO: "..query)
     else
         if remoteWhoPromptStatus then remoteWhoPromptStatus:SetText("WHO failed: "..tostring(err)) end
@@ -1368,11 +1376,37 @@ local function RunPendingRemoteWho()
     end
 end
 
+local ActivateNextRemoteWho
+local FinishActiveRemoteWho
+
+local function RemoteWhoQueueCount()
+    return #remoteWhoRequestQueue
+end
+
+local function RemoteWhoPromptDescription()
+    local source=""
+    if pendingRemoteWhoSourceName and pendingRemoteWhoSourceName~="" then
+        source=tostring(pendingRemoteWhoSourceName)
+        if pendingRemoteWhoSourceLabel and pendingRemoteWhoSourceLabel~="" then
+            source=source.." ["..tostring(pendingRemoteWhoSourceLabel).."]"
+        end
+        source=source..": "
+    end
+
+    if pendingRemoteWhoKind=="zone" then
+        if pendingRemoteWhoFilter=="60" then
+            return source.."WHO "..tostring(pendingRemoteWhoValue).." 60"
+        end
+        return source.."WHO "..tostring(pendingRemoteWhoValue)
+    end
+    return source.."WHO "..tostring(pendingRemoteWhoValue or "?")
+end
+
 local function EnsureRemoteWhoPrompt()
     if remoteWhoPrompt then return end
 
     local box=CreateFrame("Frame","VoidLinkRemoteWhoPrompt",UIParent,"BackdropTemplate")
-    box:SetSize(390,150)
+    box:SetSize(410,154)
     box:SetPoint("CENTER",0,180)
     box:SetFrameStrata("DIALOG")
     box:SetClampedToScreen(true)
@@ -1386,18 +1420,17 @@ local function EnsureRemoteWhoPrompt()
 
     local title=box:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
     title:SetPoint("TOP",0,-14)
-    title:SetText("VoidLink WHO Request")
+    title:SetText("VoidLink WHO Queue")
 
     local textLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlight")
     textLine:SetPoint("TOPLEFT",18,-46)
-    textLine:SetWidth(354)
+    textLine:SetWidth(374)
     textLine:SetJustifyH("LEFT")
 
     local statusLine=box:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
     statusLine:SetPoint("TOPLEFT",18,-75)
-    statusLine:SetWidth(354)
+    statusLine:SetWidth(374)
     statusLine:SetJustifyH("LEFT")
-    statusLine:SetText("Click Run WHO to perform the live query.")
 
     local run=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
     run:SetSize(120,26)
@@ -1405,11 +1438,15 @@ local function EnsureRemoteWhoPrompt()
     run:SetText("Run WHO")
     run:SetScript("OnClick",RunPendingRemoteWho)
 
-    local close=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
-    close:SetSize(80,26)
-    close:SetPoint("BOTTOMRIGHT",-18,15)
-    close:SetText("Close")
-    close:SetScript("OnClick",function() box:Hide() end)
+    local ignore=CreateFrame("Button",nil,box,"UIPanelButtonTemplate")
+    ignore:SetSize(100,26)
+    ignore:SetPoint("BOTTOMRIGHT",-18,15)
+    ignore:SetText("Ignore")
+    ignore:SetScript("OnClick",function()
+        if FinishActiveRemoteWho then
+            FinishActiveRemoteWho("IGNORED")
+        end
+    end)
 
     remoteWhoPrompt=box
     remoteWhoPromptText=textLine
@@ -1417,20 +1454,78 @@ local function EnsureRemoteWhoPrompt()
     remoteWhoPromptStatus=statusLine
 end
 
-local function ShowRemoteWhoPrompt(kind,value,filter)
+local function RefreshRemoteWhoPrompt()
+    if not pendingRemoteWhoKind then
+        if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+        return
+    end
+
     EnsureRemoteWhoPrompt()
     remoteWhoPromptButton:SetText("Run WHO")
-    remoteWhoPromptStatus:SetText("Click Run WHO to query live players.")
-    if kind=="zone" then
-        if filter=="60" then
-            remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." — level 60 count")
-        else
-            remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." — noobs + 60s")
-        end
-    else
-        remoteWhoPromptText:SetText("Receiver asks: find player "..tostring(value))
-    end
+    remoteWhoPromptText:SetText(RemoteWhoPromptDescription())
+
+    local queued=RemoteWhoQueueCount()
+    local queueText=queued>0 and (" • "..tostring(queued).." queued") or ""
+    remoteWhoPromptStatus:SetText("Click Run WHO or Ignore • expires in 30s"..queueText)
     remoteWhoPrompt:Show()
+end
+
+ActivateNextRemoteWho=function()
+    if pendingRemoteWhoKind then
+        RefreshRemoteWhoPrompt()
+        return
+    end
+
+    local item=table.remove(remoteWhoRequestQueue,1)
+    if not item then
+        if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+        return
+    end
+
+    pendingRemoteWhoKind=item.kind
+    pendingRemoteWhoValue=item.value
+    pendingRemoteWhoRaw=item.raw
+    pendingRemoteWhoFilter=item.filter
+    pendingRemoteWhoRequesterID=item.requesterID
+    pendingRemoteWhoSourceName=item.sourceName
+    pendingRemoteWhoSourceLabel=item.sourceLabel
+
+    pendingRemoteWhoToken=pendingRemoteWhoToken+1
+    local token=pendingRemoteWhoToken
+    RefreshRemoteWhoPrompt()
+
+    C_Timer.After(30,function()
+        if pendingRemoteWhoKind and pendingRemoteWhoToken==token
+            and remoteWhoPromptButton and remoteWhoPromptButton:GetText()=="Run WHO"
+        then
+            FinishActiveRemoteWho("TIMEOUT")
+        end
+    end)
+end
+
+FinishActiveRemoteWho=function(reason)
+    local requesterID=pendingRemoteWhoRequesterID
+    local raw=pendingRemoteWhoRaw or pendingRemoteWhoValue or "?"
+    if requesterID and reason then
+        SendBNToID(requesterID,table.concat({
+            "WR","X",Clean(reason),Clean(raw)
+        },"\031"))
+    end
+
+    ClearPendingRemoteWho()
+    if remoteWhoPrompt then remoteWhoPrompt:Hide() end
+    ActivateNextRemoteWho()
+end
+
+local function QueueRemoteWhoRequest(item)
+    if not item then return end
+    if pendingRemoteWhoKind then
+        remoteWhoRequestQueue[#remoteWhoRequestQueue+1]=item
+        RefreshRemoteWhoPrompt()
+    else
+        remoteWhoRequestQueue[#remoteWhoRequestQueue+1]=item
+        ActivateNextRemoteWho()
+    end
 end
 
 local function SortedWhoResults(query)
@@ -2026,6 +2121,8 @@ f:SetScript("OnEvent",function(self,event,...)
             if p[1]=="WQ" then
                 local query=p[2] or ""
                 local requesterID=senderID or tonumber(p[3])
+                local sourceName=p[4] or ""
+                local sourceLabel=p[5] or ""
                 local targetQuery,filter=ParseRemoteWhoRequest(query)
                 local kind,value=ResolveRemoteWhoTarget(targetQuery)
 
@@ -2034,20 +2131,26 @@ f:SetScript("OnEvent",function(self,event,...)
                 end
 
                 pendingRemoteWhoZone=nil
-                pendingRemoteWhoKind=kind
-                pendingRemoteWhoValue=value
-                pendingRemoteWhoRaw=query
-                pendingRemoteWhoFilter=filter
-                pendingRemoteWhoRequesterID=requesterID
+                QueueRemoteWhoRequest({
+                    kind=kind,
+                    value=value,
+                    raw=query,
+                    filter=filter,
+                    requesterID=requesterID,
+                    sourceName=sourceName,
+                    sourceLabel=sourceLabel,
+                })
 
-                ShowRemoteWhoPrompt(kind,value,filter)
-                SendBNToID(requesterID,table.concat({"WR","Q",kind,Clean(value),Clean(filter or "")},"\031"))
+                SendBNToID(requesterID,table.concat({
+                    "WR","Q",kind,Clean(value),Clean(filter or ""),tostring(RemoteWhoQueueCount())
+                },"\031"))
+
                 if kind=="zone" and filter=="60" then
-                    Print("Horde requested WHO: level 60 count in "..value..".")
+                    Print("Queued WHO: level 60 count in "..value..".")
                 elseif kind=="zone" then
-                    Print("Horde requested WHO: "..value..".")
+                    Print("Queued WHO: "..value..".")
                 else
-                    Print("Horde requested WHO: player "..value..".")
+                    Print("Queued WHO: player "..value..".")
                 end
                 return
             end

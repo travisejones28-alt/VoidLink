@@ -30,6 +30,7 @@ local pendingRemoteWhoRequesterID = nil
 local pendingRemoteWhoKind = nil
 local pendingRemoteWhoValue = nil
 local pendingRemoteWhoRaw = nil
+local pendingRemoteWhoFilter = nil
 local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
@@ -261,6 +262,39 @@ end
 -- Resolve loose receiver input. Exact/common aliases win first; otherwise a
 -- unique zone-name/alias prefix is treated as a zone. Anything ambiguous or
 -- unknown falls back to a player-name WHO lookup.
+local function ParseRemoteWhoRequest(query)
+    local raw=tostring(query or ""):match("^%s*(.-)%s*$") or ""
+    if raw=="" then return "",nil end
+
+    local tokens={}
+    for token in raw:gmatch("%S+") do
+        tokens[#tokens+1]=token
+    end
+
+    local kept={}
+    local filter=nil
+    local i=1
+    while i<=#tokens do
+        local token=tostring(tokens[i] or "")
+        local lower=token:lower()
+        local nextLower=tostring(tokens[i+1] or ""):lower()
+
+        if lower=="60" or lower=="60s" or lower=="lvl60"
+            or lower=="level60" or lower=="level-60"
+        then
+            filter="60"
+        elseif (lower=="level" or lower=="lvl") and nextLower=="60" then
+            filter="60"
+            i=i+1
+        else
+            kept[#kept+1]=token
+        end
+        i=i+1
+    end
+
+    return table.concat(kept," "):match("^%s*(.-)%s*$") or "",filter
+end
+
 local function ResolveRemoteWhoTarget(query)
     local raw=tostring(query or ""):match("^%s*(.-)%s*$") or ""
     local q=raw:lower()
@@ -1215,12 +1249,14 @@ local function ClearPendingRemoteWho()
     pendingRemoteWhoKind=nil
     pendingRemoteWhoValue=nil
     pendingRemoteWhoRaw=nil
+    pendingRemoteWhoFilter=nil
     pendingRemoteWhoRequesterID=nil
 end
 
 local function SendLiveRemoteWhoResults()
     local kind=pendingRemoteWhoKind
     local value=pendingRemoteWhoValue
+    local filter=pendingRemoteWhoFilter
     local requesterID=pendingRemoteWhoRequesterID
     if not kind or not value or not requesterID then return end
 
@@ -1250,18 +1286,30 @@ local function SendLiveRemoteWhoResults()
     end
 
     if kind=="zone" then
+        local reportedSixties=sixties
+        if filter=="60" and tonumber(total) and tonumber(total)>=shown then
+            -- The live query itself is level-filtered, so total is the best
+            -- available count even when Blizzard only exposes part of the list.
+            reportedSixties=tonumber(total) or sixties
+        end
+
         SendBNToID(requesterID,table.concat({
-            "WR","ZH",Clean(value),tostring(noobs),tostring(sixties),tostring(shown),tostring(total or shown)
+            "WR","ZH",Clean(value),tostring(noobs),tostring(reportedSixties),
+            tostring(shown),tostring(total or shown),Clean(filter or "")
         },"\031"))
 
-        for _,info in ipairs(matches) do
-            SendBNToID(requesterID,table.concat({
-                "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
-            },"\031"))
+        -- A "who <zone> 60" request is count-only. Do not spam the receiver
+        -- with player rows when the user only asked how many 60s are present.
+        if filter~="60" then
+            for _,info in ipairs(matches) do
+                SendBNToID(requesterID,table.concat({
+                    "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
+                },"\031"))
+            end
         end
 
         local tail=""
-        if tonumber(total) and tonumber(total)>shown then
+        if filter~="60" and tonumber(total) and tonumber(total)>shown then
             tail="WHO capped at "..tostring(shown).." visible results; zone totals may be higher."
         end
         SendBNToID(requesterID,table.concat({"WR","ZT",tail},"\031"))
@@ -1291,9 +1339,14 @@ local function RunPendingRemoteWho()
 
     local query
     if pendingRemoteWhoKind=="zone" then
-        -- Query the whole zone so the receiver can report sub-60 "noobs"
-        -- separately from level 60s, then list the 60s by name/class.
-        query='z-"'..pendingRemoteWhoValue..'"'
+        if pendingRemoteWhoFilter=="60" then
+            -- Exact level filter keeps "who RR 60" focused on the requested
+            -- count and makes GetNumWhoResults() useful even when results cap.
+            query='z-"'..pendingRemoteWhoValue..'" 60'
+        else
+            -- Full zone query preserves the normal noobs + 60s report.
+            query='z-"'..pendingRemoteWhoValue..'"'
+        end
     else
         query='n-"'..pendingRemoteWhoValue..'"'
     end
@@ -1364,12 +1417,16 @@ local function EnsureRemoteWhoPrompt()
     remoteWhoPromptStatus=statusLine
 end
 
-local function ShowRemoteWhoPrompt(kind,value)
+local function ShowRemoteWhoPrompt(kind,value,filter)
     EnsureRemoteWhoPrompt()
     remoteWhoPromptButton:SetText("Run WHO")
     remoteWhoPromptStatus:SetText("Click Run WHO to query live players.")
     if kind=="zone" then
-        remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." (noobs + 60s)")
+        if filter=="60" then
+            remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." — level 60 count")
+        else
+            remoteWhoPromptText:SetText("Receiver asks: WHO "..tostring(value).." — noobs + 60s")
+        end
     else
         remoteWhoPromptText:SetText("Receiver asks: find player "..tostring(value))
     end
@@ -1969,7 +2026,8 @@ f:SetScript("OnEvent",function(self,event,...)
             if p[1]=="WQ" then
                 local query=p[2] or ""
                 local requesterID=senderID or tonumber(p[3])
-                local kind,value=ResolveRemoteWhoTarget(query)
+                local targetQuery,filter=ParseRemoteWhoRequest(query)
+                local kind,value=ResolveRemoteWhoTarget(targetQuery)
 
                 if not requesterID or not kind or not value or value=="" then
                     return
@@ -1979,11 +2037,18 @@ f:SetScript("OnEvent",function(self,event,...)
                 pendingRemoteWhoKind=kind
                 pendingRemoteWhoValue=value
                 pendingRemoteWhoRaw=query
+                pendingRemoteWhoFilter=filter
                 pendingRemoteWhoRequesterID=requesterID
 
-                ShowRemoteWhoPrompt(kind,value)
-                SendBNToID(requesterID,table.concat({"WR","Q",kind,Clean(value)},"\031"))
-                Print("Horde requested WHO: "..(kind=="zone" and ("60s in "..value) or ("player "..value))..".")
+                ShowRemoteWhoPrompt(kind,value,filter)
+                SendBNToID(requesterID,table.concat({"WR","Q",kind,Clean(value),Clean(filter or "")},"\031"))
+                if kind=="zone" and filter=="60" then
+                    Print("Horde requested WHO: level 60 count in "..value..".")
+                elseif kind=="zone" then
+                    Print("Horde requested WHO: "..value..".")
+                else
+                    Print("Horde requested WHO: player "..value..".")
+                end
                 return
             end
         end

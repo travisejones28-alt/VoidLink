@@ -12,6 +12,7 @@ local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
 local remoteWhoState = { mode="", filter="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
+local pendingWhoReplyRoute = nil
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -178,13 +179,17 @@ local function Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage("|cffff5555VoidLink Receiver|r: "..tostring(msg))
 end
 
-local function SendRelayChat(message, channel)
+local function SendRelayChat(message, channel, target)
     -- The global is a deprecation fallback on current Classic clients. Resolve
     -- the supported API at send time, while retaining older-client support.
     local send = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
     local ok, err
     if type(send) == "function" then
-        ok, err = pcall(send, message, channel)
+        if channel=="CHANNEL" and target then
+            ok, err = pcall(send, message, channel, nil, target)
+        else
+            ok, err = pcall(send, message, channel)
+        end
     else
         ok, err = false, "chat sending API unavailable"
     end
@@ -963,8 +968,9 @@ local WHO_ZONE_OPTIONS = {
 
 local AddWhoOutput
 
-local function SendRemoteWhoQuery(query)
+local function SendRemoteWhoQuery(query, replyRoute)
     query=tostring(query or ""):match("^%s*(.-)%s*$") or ""
+    pendingWhoReplyRoute=replyRoute
     if query=="" then
         AddWhoOutput("|cffff7777WHO:|r Use: who RR, who RR 60, or who Playername")
         return
@@ -992,6 +998,7 @@ local function SendRemoteWhoQuery(query)
     if ok then
         AddWhoOutput("|cff888888WHO > "..query.."|r")
     else
+        pendingWhoReplyRoute=nil
         AddWhoOutput("|cffff7777WHO query failed:|r "..tostring(result))
     end
 end
@@ -1026,49 +1033,67 @@ local function PublishWhoResult(localLine,publicLine)
     publicLine=CleanOutgoing(publicLine or "")
     if #publicLine>240 then publicLine=publicLine:sub(1,240) end
 
-    if DB.partyRelay and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) and not (IsInRaid and IsInRaid()) then
-        SendRelayChat(publicLine,"PARTY")
-        sent=true
-    end
-    if DB.raidRelay and IsInRaid and IsInRaid() then
-        SendRelayChat(publicLine,"RAID")
-        sent=true
-    end
-    if DB.guildRelay and IsInGuild and IsInGuild() then
-        SendRelayChat(publicLine,"GUILD")
-        sent=true
+    -- A WHO command typed into chat replies to that same chat destination.
+    -- Example: Guild -> Guild, Party -> Party, Raid -> Raid.
+    if pendingWhoReplyRoute and pendingWhoReplyRoute.channel then
+        sent=SendRelayChat(publicLine,pendingWhoReplyRoute.channel,pendingWhoReplyRoute.target)==true
+    else
+        if DB.partyRelay and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) and not (IsInRaid and IsInRaid()) then
+            SendRelayChat(publicLine,"PARTY")
+            sent=true
+        end
+        if DB.raidRelay and IsInRaid and IsInRaid() then
+            SendRelayChat(publicLine,"RAID")
+            sent=true
+        end
+        if DB.guildRelay and IsInGuild and IsInGuild() then
+            SendRelayChat(publicLine,"GUILD")
+            sent=true
+        end
     end
 
-    -- If no selected broadcast destination is currently usable, WHO is a
-    -- private/system result on the receiver.
     if not sent then
         DEFAULT_CHAT_FRAME:AddMessage(localLine)
     end
 end
 
-local function PublishWhoNames()
-    if #remoteWhoState.names==0 then return end
+local function PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
+    local localBase="|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: |cffffcc00"
+        ..tostring(noobs).." noobs|r / |cff66ff66"..tostring(sixties).." 60s|r"
+    local publicBase="[WHO] "..zoneLabel..": "..tostring(noobs).." noobs / "..tostring(sixties).." 60s"
 
-    local zoneLabel=AbbrevZone(remoteWhoState.zone or "?")
-    local localChunk,plainChunk={},{}
-    local chunkNumber=1
-    for i=1,#remoteWhoState.names do
-        localChunk[#localChunk+1]=remoteWhoState.names[i]
-        plainChunk[#plainChunk+1]=remoteWhoState.plainNames[i] or "?"
-        if #localChunk==5 or i==#remoteWhoState.names then
-            local localPrefix=chunkNumber==1
-                and ("|cff66ccff[WHO]|r |cffffffff"..zoneLabel.." 60s:|r ")
-                or "|cff888888   ↳ |r"
-            local publicPrefix=chunkNumber==1
-                and ("[WHO] "..zoneLabel.." 60s: ")
-                or "[WHO]   "
-            PublishWhoResult(
-                localPrefix..table.concat(localChunk,", "),
-                publicPrefix..table.concat(plainChunk,", ")
-            )
-            localChunk,plainChunk={},{}
-            chunkNumber=chunkNumber+1
+    if #remoteWhoState.names==0 then
+        PublishWhoResult(localBase..capNote,publicBase..publicCap)
+        return
+    end
+
+    local localNames=table.concat(remoteWhoState.names,",")
+    local publicNames=table.concat(remoteWhoState.plainNames,",")
+    local publicLine=publicBase..": "..publicNames
+
+    -- Most zone reports fit in one line. Only split when the WoW chat limit
+    -- would actually be exceeded, and keep the continuation tiny.
+    if #publicLine<=240 then
+        PublishWhoResult(localBase..": "..localNames..capNote,publicLine..publicCap)
+        return
+    end
+
+    PublishWhoResult(localBase..capNote,publicBase..publicCap)
+
+    local chunk={}
+    local chunkLen=0
+    for i,name in ipairs(remoteWhoState.plainNames) do
+        local add=(#chunk==0 and 0 or 1)+#name
+        if #chunk>0 and (chunkLen+add)>220 then
+            PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","))
+            chunk={}
+            chunkLen=0
         end
+        chunk[#chunk+1]=name
+        chunkLen=chunkLen+add
+    end
+    if #chunk>0 then
+        PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","))
     end
 end
 
@@ -1127,28 +1152,20 @@ local function HandleRemoteWhoResponse(p)
         local zoneLabel=AbbrevZone(zone)
         local capNote=""
         if p[3] and p[3]~="" then
-            capNote=" |cff888888(capped; totals may be higher)|r"
+            capNote=" |cff888888(capped)|r"
         end
-        local publicCap=(p[3] and p[3]~="") and " (capped; totals may be higher)" or ""
+        local publicCap=(p[3] and p[3]~="") and " (capped)" or ""
 
-        -- "who RR 60" is deliberately count-only: one clean result line,
-        -- no noob count and no player-name dump.
         if remoteWhoState.filter=="60" then
             PublishWhoResult(
-                "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r — |cff66ff66"..tostring(sixties).." level 60"..(sixties==1 and "" or "s").."|r",
-                "[WHO] "..zoneLabel..": "..tostring(sixties).." level 60"..(sixties==1 and "" or "s")
+                "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: |cff66ff66"..tostring(sixties).." 60s|r",
+                "[WHO] "..zoneLabel..": "..tostring(sixties).." 60s"
             )
-            return
+        else
+            PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
         end
 
-        PublishWhoResult(
-            "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r — |cffffcc00"..tostring(noobs).." noobs|r • |cff66ff66"..tostring(sixties).." 60s|r"..capNote,
-            "[WHO] "..zoneLabel..": "..tostring(noobs).." noobs | "..tostring(sixties).." 60s"..publicCap
-        )
-
-        if sixties>0 then
-            PublishWhoNames()
-        end
+        pendingWhoReplyRoute=nil
         return
     end
 
@@ -1166,6 +1183,7 @@ local function HandleRemoteWhoResponse(p)
             .."("..tostring(shortClass~="" and shortClass or "?")..")"
             .." | Lv"..tostring(level or "?").." | "..tostring(zone)
         PublishWhoResult(localLine,publicLine)
+        pendingWhoReplyRoute=nil
         return
     end
 
@@ -1175,6 +1193,7 @@ local function HandleRemoteWhoResponse(p)
             "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777not found / offline|r",
             "[WHO] "..tostring(name).." — not found / offline"
         )
+        pendingWhoReplyRoute=nil
         return
     end
 
@@ -1639,7 +1658,7 @@ local whoCommandEvents={
     CHAT_MSG_CHANNEL=true,
 }
 
-local function TryWhoChatCommand(event,text,senderName)
+local function TryWhoChatCommand(event,text,senderName,channelIndex)
     local sender=BareName(senderName)
     local selfName=BareName(UnitName("player"))
     local isSelf=sender and selfName and sender==selfName
@@ -1661,7 +1680,22 @@ local function TryWhoChatCommand(event,text,senderName)
     arg=tostring(arg or ""):match("^%s*(.-)%s*$") or ""
     if arg=="" then return false end
 
-    SendRemoteWhoQuery(arg)
+    local replyRoute=nil
+    if event=="CHAT_MSG_GUILD" then
+        replyRoute={channel="GUILD"}
+    elseif event=="CHAT_MSG_PARTY" or event=="CHAT_MSG_PARTY_LEADER" then
+        replyRoute={channel="PARTY"}
+    elseif event=="CHAT_MSG_RAID" or event=="CHAT_MSG_RAID_LEADER" then
+        replyRoute={channel="RAID"}
+    elseif event=="CHAT_MSG_SAY" then
+        replyRoute={channel="SAY"}
+    elseif event=="CHAT_MSG_YELL" then
+        replyRoute={channel="YELL"}
+    elseif event=="CHAT_MSG_CHANNEL" and tonumber(channelIndex) then
+        replyRoute={channel="CHANNEL",target=tonumber(channelIndex)}
+    end
+
+    SendRemoteWhoQuery(arg,replyRoute)
     return true
 end
 
@@ -1822,8 +1856,8 @@ f:SetScript("OnEvent",function(self,event,...)
     end
 
     if whoCommandEvents[event] then
-        local text,senderName=...
-        TryWhoChatCommand(event,text,senderName)
+        local text,senderName,_,_,_,_,_,channelIndex=...
+        TryWhoChatCommand(event,text,senderName,channelIndex)
         return
     end
 

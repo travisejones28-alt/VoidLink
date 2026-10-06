@@ -1080,9 +1080,14 @@ local function PublishWhoResult(localLine,publicLine)
 end
 
 local function PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
-    local localBase="|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: |cffffcc00"
-        ..tostring(noobs).." noobs|r / |cff66ff66"..tostring(sixties).." 60s|r"
-    local publicBase="[WHO] "..zoneLabel..": "..tostring(noobs).." noobs / "..tostring(sixties).." 60s"
+    local localBase="|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: "
+    local publicBase="[WHO] "..zoneLabel..": "
+    if remoteWhoState.filter~="60" then
+        localBase=localBase.."|cffffcc00"..tostring(noobs).." noobs|r / "
+        publicBase=publicBase..tostring(noobs).." noobs / "
+    end
+    localBase=localBase.."|cff66ff66"..tostring(sixties).." 60s|r"
+    publicBase=publicBase..tostring(sixties).." 60s"
 
     if #remoteWhoState.names==0 then
         PublishWhoResult(localBase..capNote,publicBase..publicCap)
@@ -1091,12 +1096,12 @@ local function PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
 
     local localNames=table.concat(remoteWhoState.names,",")
     local publicNames=table.concat(remoteWhoState.plainNames,",")
-    local publicLine=publicBase..": "..publicNames
+    local publicLine=publicBase..": "..publicNames..publicCap
 
     -- Most zone reports fit in one line. Only split when the WoW chat limit
     -- would actually be exceeded, and keep the continuation tiny.
     if #publicLine<=240 then
-        PublishWhoResult(localBase..": "..localNames..capNote,publicLine..publicCap)
+        PublishWhoResult(localBase..": "..localNames..capNote,publicLine)
         return
     end
 
@@ -1194,14 +1199,7 @@ local function HandleRemoteWhoResponse(p)
         end
         local publicCap=(p[3] and p[3]~="") and " (capped)" or ""
 
-        if remoteWhoState.filter=="60" then
-            PublishWhoResult(
-                "|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: |cff66ff66"..tostring(sixties).." 60s|r",
-                "[WHO] "..zoneLabel..": "..tostring(sixties).." 60s"
-            )
-        else
-            PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
-        end
+        PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
 
         CompleteWhoReply()
         return

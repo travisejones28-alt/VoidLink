@@ -1310,18 +1310,15 @@ local function SendLiveRemoteWhoResults()
             tostring(shown),tostring(total or shown),Clean(filter or "")
         },"\031"))
 
-        -- A "who <zone> 60" request is count-only. Do not spam the receiver
-        -- with player rows when the user only asked how many 60s are present.
-        if filter~="60" then
-            for _,info in ipairs(matches) do
-                SendBNToID(requesterID,table.concat({
-                    "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
-                },"\031"))
-            end
+        -- Both zone queries include the visible level-60 names/classes.
+        for _,info in ipairs(matches) do
+            SendBNToID(requesterID,table.concat({
+                "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
+            },"\031"))
         end
 
         local tail=""
-        if filter~="60" and tonumber(total) and tonumber(total)>shown then
+        if tonumber(total) and tonumber(total)>shown then
             tail="WHO capped at "..tostring(shown).." visible results; zone totals may be higher."
         end
         SendBNToID(requesterID,table.concat({"WR","ZT",tail},"\031"))
@@ -1351,8 +1348,8 @@ local function RunPendingRemoteWho()
     local query
     if pendingRemoteWhoKind=="zone" then
         if pendingRemoteWhoFilter=="60" then
-            -- Exact level filter keeps "who RR 60" focused on the requested
-            -- count and makes GetNumWhoResults() useful even when results cap.
+            -- Exact level filter returns 60s and keeps the total useful even
+            -- when only part of the player list is visible.
             query='z-"'..pendingRemoteWhoValue..'" 60'
         else
             -- Full zone query preserves the normal noobs + 60s report.

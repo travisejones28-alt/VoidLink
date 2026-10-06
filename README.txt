@@ -38,3 +38,7 @@ PRIVATE FRIEND STATUS ALERTS (1.0.3)
 Update VoidLink on both clients. In Horde Receiver Settings > Relay types, enable Friend login/logout (off by default), then use the private VoidLink Chat window. The Alliance sender's Relay friend login/logout option is enabled by default. Ordinary WoW friends changing online/offline state produce a timestamped green "Name logged IN." or red "Name logged OUT." line. Battle.net friends are excluded.
 Friend alerts never enter normal chat, Party/Raid/Guild, archive/export, or alert sounds. Closed private windows retain notices in their scrollback without opening automatically. The first roster after login/reload is a silent baseline; adding/removing friends does not produce false login/logout notices. Only transitions observed while the spy is running and its relay is enabled/connected are sent; no offline history is replayed. Partial roster updates are ignored until complete.
 Friend status regression: lua tests/friend_status.lua (also runs the chat-routing regression).
+
+WHO ZONE RESULTS (1.0.4)
+Update VoidLink on both clients and /reload. Both "who RR" and "who RR 60" include the visible level-60 names with short classes, such as Aloha(Rog). The filtered query omits the noob count. Short results use one line; longer name lists split at the chat limit and reply to the requesting chat destination. Capped results keep the available total and mark the visible list as capped.
+WHO result regression: lua tests/who_results.lua (also runs the chat-routing regression).

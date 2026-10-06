@@ -2186,8 +2186,9 @@ f:SetScript("OnEvent",function(self,event,...)
             SyncScannerToRelayCache()
         end)
 
-        if pendingRemoteWhoKind and pendingRemoteWhoRequesterID then
-            -- WHO_LIST_UPDATE completes the receiver's hardware-clicked live query.
+        if pendingRemoteWhoKind and pendingRemoteWhoRequesterID and pendingRemoteWhoClicked then
+            -- Only a request that was actually clicked may consume WHO results.
+            -- Background scanner updates must not complete a queued prompt.
             C_Timer.After(0.05,SendLiveRemoteWhoResults)
         elseif pendingRemoteWhoZone and pendingRemoteWhoRequesterID then
             -- Legacy fallback retained for older queued zone scans.

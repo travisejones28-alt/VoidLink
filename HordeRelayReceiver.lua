@@ -12,7 +12,7 @@ local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
 local remoteWhoState = { mode="", filter="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
-local pendingWhoReplyRoute = nil
+local pendingWhoReplies = {}
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -968,9 +968,18 @@ local WHO_ZONE_OPTIONS = {
 
 local AddWhoOutput
 
-local function SendRemoteWhoQuery(query, replyRoute)
+local function CurrentWhoReply()
+    return pendingWhoReplies[1]
+end
+
+local function CompleteWhoReply()
+    if #pendingWhoReplies>0 then
+        table.remove(pendingWhoReplies,1)
+    end
+end
+
+local function SendRemoteWhoQuery(query, replyRoute, requesterName, sourceLabel)
     query=tostring(query or ""):match("^%s*(.-)%s*$") or ""
-    pendingWhoReplyRoute=replyRoute
     if query=="" then
         AddWhoOutput("|cffff7777WHO:|r Use: who RR, who RR 60, or who Playername")
         return
@@ -981,7 +990,13 @@ local function SendRemoteWhoQuery(query, replyRoute)
         return
     end
 
-    local payload=table.concat({"WQ",query,tostring(OwnGameAccountID() or "")},"\031")
+    local payload=table.concat({
+        "WQ",
+        query,
+        tostring(OwnGameAccountID() or ""),
+        tostring(requesterName or UnitName("player") or ""),
+        tostring(sourceLabel or "Local")
+    },"\031")
     local ok,result
 
     -- Pairing works through the legacy BNet API on Classic Era, so WHO
@@ -996,9 +1011,14 @@ local function SendRemoteWhoQuery(query, replyRoute)
     end
 
     if ok then
+        pendingWhoReplies[#pendingWhoReplies+1]={
+            route=replyRoute,
+            requester=BareName(requesterName or UnitName("player") or ""),
+            source=tostring(sourceLabel or "Local"),
+            query=query,
+        }
         AddWhoOutput("|cff888888WHO > "..query.."|r")
     else
-        pendingWhoReplyRoute=nil
         AddWhoOutput("|cffff7777WHO query failed:|r "..tostring(result))
     end
 end
@@ -1035,8 +1055,10 @@ local function PublishWhoResult(localLine,publicLine)
 
     -- A WHO command typed into chat replies to that same chat destination.
     -- Example: Guild -> Guild, Party -> Party, Raid -> Raid.
-    if pendingWhoReplyRoute and pendingWhoReplyRoute.channel then
-        sent=SendRelayChat(publicLine,pendingWhoReplyRoute.channel,pendingWhoReplyRoute.target)==true
+    local reply=CurrentWhoReply()
+    local route=reply and reply.route
+    if route and route.channel then
+        sent=SendRelayChat(publicLine,route.channel,route.target)==true
     else
         if DB.partyRelay and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) and not (IsInRaid and IsInRaid()) then
             SendRelayChat(publicLine,"PARTY")
@@ -1104,12 +1126,28 @@ local function HandleRemoteWhoResponse(p)
         local kind=p[3] or "?"
         local value=p[4] or "?"
         local filter=p[5] or ""
+        local queued=tonumber(p[6] or "0") or 0
         local what=kind=="zone" and AbbrevZone(value) or value
+        local queueNote=queued>0 and (" • "..tostring(queued).." waiting") or ""
         if kind=="zone" and filter=="60" then
-            AddWhoOutput("|cff66ccff[WHO]|r "..what.." 60 queued — click |cff66ff66RUN WHO|r on sender.")
+            AddWhoOutput("|cff66ccff[WHO]|r "..what.." 60 queued"..queueNote)
         else
-            AddWhoOutput("|cff66ccff[WHO]|r "..what.." queued — click |cff66ff66RUN WHO|r on sender.")
+            AddWhoOutput("|cff66ccff[WHO]|r "..what.." queued"..queueNote)
         end
+        return
+    end
+
+    if subtype=="X" then
+        local reason=tostring(p[3] or ""):upper()
+        local query=p[4] or ((CurrentWhoReply() and CurrentWhoReply().query) or "?")
+        if reason=="TIMEOUT" then
+            AddWhoOutput("|cff888888[WHO]|r "..tostring(query).." expired on sender.")
+        elseif reason=="IGNORED" then
+            AddWhoOutput("|cff888888[WHO]|r "..tostring(query).." ignored on sender.")
+        else
+            AddWhoOutput("|cff888888[WHO]|r "..tostring(query).." cancelled.")
+        end
+        CompleteWhoReply()
         return
     end
 
@@ -1165,7 +1203,7 @@ local function HandleRemoteWhoResponse(p)
             PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
         end
 
-        pendingWhoReplyRoute=nil
+        CompleteWhoReply()
         return
     end
 
@@ -1183,7 +1221,7 @@ local function HandleRemoteWhoResponse(p)
             .."("..tostring(shortClass~="" and shortClass or "?")..")"
             .." | Lv"..tostring(level or "?").." | "..tostring(zone)
         PublishWhoResult(localLine,publicLine)
-        pendingWhoReplyRoute=nil
+        CompleteWhoReply()
         return
     end
 
@@ -1193,7 +1231,7 @@ local function HandleRemoteWhoResponse(p)
             "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777not found / offline|r",
             "[WHO] "..tostring(name).." — not found / offline"
         )
-        pendingWhoReplyRoute=nil
+        CompleteWhoReply()
         return
     end
 
@@ -1204,6 +1242,7 @@ local function HandleRemoteWhoResponse(p)
             "|cffff7777WHO DB|r "..normalized..": no cached players found.",
             "[WHO] "..normalized..": no cached players found."
         )
+        CompleteWhoReply()
         return
     end
 
@@ -1230,7 +1269,7 @@ local function HandleRemoteWhoResponse(p)
             "|cff66ff66WHO DB|r "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached",
             "[WHO DB] "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached"
         )
-        PublishWhoNames()
+        CompleteWhoReply()
         return
     end
 end
@@ -1644,7 +1683,7 @@ end
 
 SLASH_REMOTEWHO1="/rwho"
 SlashCmdList["REMOTEWHO"]=function(msg)
-    SendRemoteWhoQuery(msg)
+    SendRemoteWhoQuery(msg,nil,UnitName("player"),"Local")
 end
 
 local whoCommandEvents={
@@ -1658,21 +1697,52 @@ local whoCommandEvents={
     CHAT_MSG_CHANNEL=true,
 }
 
-local function TryWhoChatCommand(event,text,senderName,channelIndex)
+local function IsGroupMemberName(name)
+    local wanted=string.lower(BareName(name or ""))
+    if wanted=="" then return false end
+    if wanted==string.lower(BareName(UnitName("player") or "")) then return true end
+
+    local raidCount=0
+    if IsInRaid and IsInRaid() then
+        raidCount=(GetNumGroupMembers and GetNumGroupMembers())
+            or (GetNumRaidMembers and GetNumRaidMembers())
+            or 0
+    end
+    for i=1,raidCount do
+        if string.lower(BareName(UnitName("raid"..i) or ""))==wanted then
+            return true
+        end
+    end
+
+    local partyCount=(GetNumSubgroupMembers and GetNumSubgroupMembers())
+        or (GetNumPartyMembers and GetNumPartyMembers())
+        or 0
+    for i=1,partyCount do
+        if string.lower(BareName(UnitName("party"..i) or ""))==wanted then
+            return true
+        end
+    end
+    return false
+end
+
+local function TryWhoChatCommand(event,text,senderName,channelIndex,channelName)
     local sender=BareName(senderName)
     local selfName=BareName(UnitName("player"))
-    local isSelf=sender and selfName and sender==selfName
+    local isSelf=sender and selfName and string.lower(sender)==string.lower(selfName)
 
-    -- Your own "who ..." commands still work anywhere we listen. Other
-    -- players may trigger WHO only through actual Party/Raid chat events, so
-    -- random Say/General/Guild messages cannot queue scans on your sender.
-    local isGroupEvent=
+    local isPartyRaidEvent=
         event=="CHAT_MSG_PARTY"
         or event=="CHAT_MSG_PARTY_LEADER"
         or event=="CHAT_MSG_RAID"
         or event=="CHAT_MSG_RAID_LEADER"
+    local isGuildEvent=event=="CHAT_MSG_GUILD"
+    local isAllowedSay=event=="CHAT_MSG_SAY" and IsGroupMemberName(sender)
 
-    if not isSelf and not isGroupEvent then return false end
+    -- Party/Raid and Guild members may request WHO. Say is accepted only from
+    -- you or a current group member. Yell/public channels remain self-only.
+    if not isSelf and not isPartyRaidEvent and not isGuildEvent and not isAllowedSay then
+        return false
+    end
 
     local trimmed=tostring(text or ""):match("^%s*(.-)%s*$") or ""
     local cmd,arg=trimmed:match("^(%S+)%s+(.+)$")
@@ -1695,7 +1765,22 @@ local function TryWhoChatCommand(event,text,senderName,channelIndex)
         replyRoute={channel="CHANNEL",target=tonumber(channelIndex)}
     end
 
-    SendRemoteWhoQuery(arg,replyRoute)
+    local sourceLabel="Local"
+    if event=="CHAT_MSG_GUILD" then
+        sourceLabel="Guild"
+    elseif event=="CHAT_MSG_PARTY" or event=="CHAT_MSG_PARTY_LEADER" then
+        sourceLabel="Party"
+    elseif event=="CHAT_MSG_RAID" or event=="CHAT_MSG_RAID_LEADER" then
+        sourceLabel="Raid"
+    elseif event=="CHAT_MSG_SAY" then
+        sourceLabel="Say"
+    elseif event=="CHAT_MSG_YELL" then
+        sourceLabel="Yell"
+    elseif event=="CHAT_MSG_CHANNEL" then
+        sourceLabel=(channelName and channelName~="") and channelName or ("Channel "..tostring(channelIndex or "?"))
+    end
+
+    SendRemoteWhoQuery(arg,replyRoute,sender,sourceLabel)
     return true
 end
 
@@ -1856,8 +1941,8 @@ f:SetScript("OnEvent",function(self,event,...)
     end
 
     if whoCommandEvents[event] then
-        local text,senderName,_,_,_,_,_,channelIndex=...
-        TryWhoChatCommand(event,text,senderName,channelIndex)
+        local text,senderName,_,channelName,_,_,_,channelIndex=...
+        TryWhoChatCommand(event,text,senderName,channelIndex,channelName)
         return
     end
 

@@ -42,3 +42,6 @@ Friend status regression: lua tests/friend_status.lua (also runs the chat-routin
 WHO ZONE RESULTS (1.0.4)
 Update VoidLink on both clients and /reload. Both "who RR" and "who RR 60" include the visible level-60 names with short classes, such as Aloha(Rog). The filtered query omits the noob count. Short results use one line; longer name lists split at the chat limit and reply to the requesting chat destination. Capped results keep the available total and mark the visible list as capped.
 WHO result regression: lua tests/who_results.lua (also runs the chat-routing regression).
+
+WHO REPLY ROUTING (1.0.5)
+Update both clients and /reload. Chat-triggered WHO results, including player-not-found replies and every line of a zone report, return only to the requesting Party, Raid, Guild, Say, Yell, or numbered channel. Each request carries an ID and its original destination through the sender queue; replies retain that destination after a receiver reload. Ignored, expired, repeated, or delayed responses cannot consume a different request's destination. A response with no known request or destination stays local. Local /rwho and dropdown requests continue to use explicitly selected forwarding outputs.

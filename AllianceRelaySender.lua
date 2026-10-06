@@ -33,6 +33,7 @@ local pendingRemoteWhoRaw = nil
 local pendingRemoteWhoFilter = nil
 local pendingRemoteWhoSourceName = nil
 local pendingRemoteWhoSourceLabel = nil
+local pendingRemoteWhoReplyContext = nil
 local pendingRemoteWhoToken = 0
 local pendingRemoteWhoClicked = false
 local remoteWhoRequestQueue = {}
@@ -1165,6 +1166,17 @@ local function SendBNToID(gameAccountID, payload)
     return false
 end
 
+local function SendRemoteWhoPacket(requesterID, fields, context)
+    -- Keep the legacy fields intact; new clients read the trailing context.
+    if context and context.id and context.id~="" then
+        fields[#fields+1]="RQ"
+        fields[#fields+1]=Clean(context.id)
+        fields[#fields+1]=Clean(context.channel or "LOCAL")
+        fields[#fields+1]=Clean(context.target or "")
+    end
+    return SendBNToID(requesterID,table.concat(fields,"\031"))
+end
+
 local function RemoteWhoResults(query)
     local normalized = NormalizeWhoQuery(query)
     local q = tostring(normalized or ""):lower()
@@ -1262,6 +1274,7 @@ local function ClearPendingRemoteWho()
     pendingRemoteWhoRequesterID=nil
     pendingRemoteWhoSourceName=nil
     pendingRemoteWhoSourceLabel=nil
+    pendingRemoteWhoReplyContext=nil
     pendingRemoteWhoClicked=false
 end
 
@@ -1270,6 +1283,7 @@ local function SendLiveRemoteWhoResults()
     local value=pendingRemoteWhoValue
     local filter=pendingRemoteWhoFilter
     local requesterID=pendingRemoteWhoRequesterID
+    local replyContext=pendingRemoteWhoReplyContext
     if not kind or not value or not requesterID then return end
 
     local shown,total=GetRemoteWhoCounts()
@@ -1305,31 +1319,31 @@ local function SendLiveRemoteWhoResults()
             reportedSixties=tonumber(total) or sixties
         end
 
-        SendBNToID(requesterID,table.concat({
+        SendRemoteWhoPacket(requesterID,{
             "WR","ZH",Clean(value),tostring(noobs),tostring(reportedSixties),
             tostring(shown),tostring(total or shown),Clean(filter or "")
-        },"\031"))
+        },replyContext)
 
         -- Both zone queries include the visible level-60 names/classes.
         for _,info in ipairs(matches) do
-            SendBNToID(requesterID,table.concat({
+            SendRemoteWhoPacket(requesterID,{
                 "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
-            },"\031"))
+            },replyContext)
         end
 
         local tail=""
         if tonumber(total) and tonumber(total)>shown then
             tail="WHO capped at "..tostring(shown).." visible results; zone totals may be higher."
         end
-        SendBNToID(requesterID,table.concat({"WR","ZT",tail},"\031"))
+        SendRemoteWhoPacket(requesterID,{"WR","ZT",tail},replyContext)
     else
         local info=matches[1]
         if info then
-            SendBNToID(requesterID,table.concat({
+            SendRemoteWhoPacket(requesterID,{
                 "WR","PL",Clean(info.name),Clean(info.level or ""),Clean(info.class),Clean(info.zone)
-            },"\031"))
+            },replyContext)
         else
-            SendBNToID(requesterID,table.concat({"WR","PN",Clean(value)},"\031"))
+            SendRemoteWhoPacket(requesterID,{"WR","PN",Clean(value)},replyContext)
         end
     end
 
@@ -1504,6 +1518,7 @@ ActivateNextRemoteWho=function()
     pendingRemoteWhoRequesterID=item.requesterID
     pendingRemoteWhoSourceName=item.sourceName
     pendingRemoteWhoSourceLabel=item.sourceLabel
+    pendingRemoteWhoReplyContext=item.replyContext
     pendingRemoteWhoClicked=false
 
     pendingRemoteWhoToken=pendingRemoteWhoToken+1
@@ -1523,9 +1538,9 @@ FinishActiveRemoteWho=function(reason)
     local requesterID=pendingRemoteWhoRequesterID
     local raw=pendingRemoteWhoRaw or pendingRemoteWhoValue or "?"
     if requesterID and reason then
-        SendBNToID(requesterID,table.concat({
+        SendRemoteWhoPacket(requesterID,{
             "WR","X",Clean(reason),Clean(raw)
-        },"\031"))
+        },pendingRemoteWhoReplyContext)
     end
 
     ClearPendingRemoteWho()
@@ -2139,6 +2154,7 @@ f:SetScript("OnEvent",function(self,event,...)
                 local requesterID=senderID or tonumber(p[3])
                 local sourceName=p[4] or ""
                 local sourceLabel=p[5] or ""
+                local replyContext={id=p[6],channel=p[7],target=p[8]}
                 local targetQuery,filter=ParseRemoteWhoRequest(query)
                 local kind,value=ResolveRemoteWhoTarget(targetQuery)
 
@@ -2155,11 +2171,12 @@ f:SetScript("OnEvent",function(self,event,...)
                     requesterID=requesterID,
                     sourceName=sourceName,
                     sourceLabel=sourceLabel,
+                    replyContext=replyContext,
                 })
 
-                SendBNToID(requesterID,table.concat({
+                SendRemoteWhoPacket(requesterID,{
                     "WR","Q",kind,Clean(value),Clean(filter or ""),tostring(RemoteWhoQueueCount())
-                },"\031"))
+                },replyContext)
 
                 if kind=="zone" and filter=="60" then
                     Print("Queued WHO: level 60 count in "..value..".")
@@ -2186,7 +2203,12 @@ f:SetScript("OnEvent",function(self,event,...)
         if pendingRemoteWhoKind and pendingRemoteWhoRequesterID and pendingRemoteWhoClicked then
             -- Only a request that was actually clicked may consume WHO results.
             -- Background scanner updates must not complete a queued prompt.
-            C_Timer.After(0.05,SendLiveRemoteWhoResults)
+            local token=pendingRemoteWhoToken
+            C_Timer.After(0.05,function()
+                if pendingRemoteWhoToken==token and pendingRemoteWhoClicked then
+                    SendLiveRemoteWhoResults()
+                end
+            end)
         elseif pendingRemoteWhoZone and pendingRemoteWhoRequesterID then
             -- Legacy fallback retained for older queued zone scans.
             local zone=pendingRemoteWhoZone

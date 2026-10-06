@@ -43,10 +43,10 @@ local function runButton()
     end
     error('Run WHO prompt button missing')
 end
-local function query(text,event,author)
+local function query(text,event,author,channelIndex,channelName)
     state.faction='Horde'; state.transport={}
     if event then
-        emit(event,'who '..text,author or 'Taliaa')
+        emit(event,'who '..text,author or 'Taliaa',nil,channelName,nil,nil,nil,channelIndex)
     else
         SlashCmdList.REMOTEWHO(text)
     end
@@ -88,6 +88,47 @@ local function test(name,fn)
     local ok,err=pcall(fn)
     if ok then passed=passed+1; print('PASS '..name)
     else failed=failed+1; print('FAIL '..name..': '..tostring(err)) end
+end
+
+local function startRequest(text,event)
+    state.faction='Horde'; state.transport={}
+    if event then emit(event,'who '..text,'Taliaa') else SlashCmdList.REMOTEWHO(text) end
+    assert(#state.transport==1,'request was not sent')
+    return state.transport[1].payload
+end
+local function queueRequest(request)
+    state.faction='Alliance'; state.transport={}
+    emit('BN_CHAT_MSG_ADDON','AHREL1',request,456)
+end
+local function runActiveWho(updates)
+    state.faction='Alliance'; state.transport={}
+    local button=runButton()
+    button.scripts.OnClick(button)
+    for _=1,updates or 1 do emit('WHO_LIST_UPDATE') end
+    flushResults()
+    return state.transport
+end
+local function ignoreActiveWho()
+    state.faction='Alliance'; state.transport={}
+    for _,f in ipairs(state.frames) do
+        if f.parent==VoidLinkRemoteWhoPrompt and f.text=='Ignore' and f.scripts.OnClick then
+            f.scripts.OnClick(f)
+            return state.transport
+        end
+    end
+    error('Ignore button missing')
+end
+local function replay(packets)
+    state.faction='Horde'
+    for _,packet in ipairs(packets) do
+        emit('BN_CHAT_MSG_ADDON',packet.prefix,packet.payload,123)
+    end
+end
+local function packetOf(packets,subtype)
+    for _,packet in ipairs(packets) do
+        if packet.payload:sub(1,#subtype+4)=='WR\031'..subtype..'\031' then return packet end
+    end
+    error('missing '..subtype..' response')
 end
 
 test('party who RR 60 includes both names and abbreviated classes in one line',function()
@@ -169,6 +210,149 @@ test('player lookup remains unchanged',function()
     query('Aloha','CHAT_MSG_PARTY')
     assert(state.whoQuery=='n-"Aloha"')
     assert(output('PARTY')=='[WHO] Aloha(Rog) / Lv60 / Redridge Mountains')
+end)
+
+test('party player-not-found reply overrides every selected forwarding destination',function()
+    state.grouped=true; DB.guildRelay=true; DB.partyRelay=true; DB.raidRelay=true
+    query('polterge','CHAT_MSG_PARTY')
+    assert(output('PARTY')=='[WHO] polterge — not found / offline')
+end)
+test('self say and yell requests reply only to their originating channels',function()
+    DB.guildRelay=true
+    query('Saylookup','CHAT_MSG_SAY')
+    assert(output('SAY')=='[WHO] Saylookup — not found / offline')
+    query('Yelllookup','CHAT_MSG_YELL')
+    assert(output('YELL')=='[WHO] Yelllookup — not found / offline')
+end)
+test('numbered channel request retains its original channel index',function()
+    DB.guildRelay=true
+    C_ChatInfo.SendChatMessage=function(msg,channel,language,target)
+        state.sent[#state.sent+1]={msg=msg,channel=channel,target=target}
+    end
+    query('Channellookup','CHAT_MSG_CHANNEL','Taliaa',7,'General')
+    assert(output('CHANNEL')=='[WHO] Channellookup — not found / offline')
+    assert(state.sent[1].target==7,'numbered channel index changed')
+end)
+test('a stale local request cannot redirect a later party reply to guild',function()
+    DB.guildRelay=true
+    local stale=startRequest('Lostrequest')
+    local party=startRequest('polterge','CHAT_MSG_PARTY')
+    queueRequest(party)
+    state.sent={}; replay(runActiveWho())
+    assert(output('PARTY')=='[WHO] polterge — not found / offline')
+    queueRequest(stale); replay(ignoreActiveWho())
+end)
+test('out-of-order completed requests keep their own guild and party routes',function()
+    local guild=startRequest('Guildlookup','CHAT_MSG_GUILD')
+    local party=startRequest('Partylookup','CHAT_MSG_PARTY')
+    queueRequest(guild); queueRequest(party)
+    local guildPackets=runActiveWho()
+    local partyPackets=runActiveWho()
+    state.sent={}; replay(partyPackets); replay(guildPackets)
+    assert(#state.sent==2)
+    assert(state.sent[1].channel=='PARTY' and state.sent[1].msg:find('Partylookup',1,true))
+    assert(state.sent[2].channel=='GUILD' and state.sent[2].msg:find('Guildlookup',1,true))
+end)
+test('late ignore notice removes only its own request',function()
+    local ignored=startRequest('Ignoredlookup','CHAT_MSG_GUILD')
+    local party=startRequest('polterge','CHAT_MSG_PARTY')
+    queueRequest(ignored); queueRequest(party)
+    local ignoredPackets=ignoreActiveWho()
+    local partyPackets=runActiveWho()
+    state.sent={}; replay(partyPackets); replay(ignoredPackets)
+    assert(output('PARTY')=='[WHO] polterge — not found / offline')
+end)
+test('late timeout notice cannot consume another request destination',function()
+    local expired=startRequest('Expiredlookup','CHAT_MSG_GUILD')
+    local party=startRequest('polterge','CHAT_MSG_PARTY')
+    queueRequest(expired); queueRequest(party)
+    local expiry
+    for _,timer in ipairs(state.timers) do if timer.delay==30 then expiry=timer.fn; break end end
+    assert(expiry,'30-second expiry timer missing')
+    state.transport={}; expiry()
+    local expiredPackets=state.transport
+    local partyPackets=runActiveWho()
+    state.sent={}; replay(partyPackets); replay(expiredPackets)
+    assert(output('PARTY')=='[WHO] polterge — not found / offline')
+end)
+test('interleaved zone packets keep names and channels separate',function()
+    local party=startRequest('RR 60','CHAT_MSG_PARTY')
+    local guild=startRequest('Wet 60','CHAT_MSG_GUILD')
+    queueRequest(party); queueRequest(guild)
+    state.rows={row('Aloha')}; local partyPackets=runActiveWho()
+    state.rows={row('Boatmage','Mage',60,'Wetlands')}; local guildPackets=runActiveWho()
+    state.sent={}
+    replay({packetOf(partyPackets,'ZH'),packetOf(guildPackets,'ZH'),
+        packetOf(partyPackets,'ZP'),packetOf(guildPackets,'ZP'),
+        packetOf(guildPackets,'ZT'),packetOf(partyPackets,'ZT')})
+    assert(#state.sent==2)
+    assert(state.sent[1].channel=='GUILD' and state.sent[1].msg=='[WHO] Wet: 1 60s: Boatmage(Mage)')
+    assert(state.sent[2].channel=='PARTY' and state.sent[2].msg=='[WHO] RR: 1 60s: Aloha(Rog)')
+end)
+test('identical missing-player results from distinct requests are not deduplicated',function()
+    local party=startRequest('polterge','CHAT_MSG_PARTY')
+    local guild=startRequest('polterge','CHAT_MSG_GUILD')
+    queueRequest(party); queueRequest(guild)
+    local first=runActiveWho(); local second=runActiveWho()
+    state.sent={}; replay(first); replay(second)
+    assert(#state.sent==2)
+    assert(state.sent[1].channel=='PARTY' and state.sent[2].channel=='GUILD')
+end)
+test('replayed terminal packet cannot consume the next queued route',function()
+    local party=startRequest('Firstlookup','CHAT_MSG_PARTY')
+    local guild=startRequest('Secondlookup','CHAT_MSG_GUILD')
+    queueRequest(party); queueRequest(guild)
+    local first=runActiveWho(); local second=runActiveWho()
+    state.sent={}; replay(first)
+    state.now=state.now+6; replay(first); replay(second)
+    assert(#state.sent==2)
+    assert(state.sent[1].channel=='PARTY' and state.sent[2].channel=='GUILD')
+    assert(state.sent[2].msg:find('Secondlookup',1,true))
+end)
+test('duplicate WHO updates cannot consume the next unclicked prompt',function()
+    local party=startRequest('Firstlookup','CHAT_MSG_PARTY')
+    local guild=startRequest('Secondlookup','CHAT_MSG_GUILD')
+    queueRequest(party); queueRequest(guild)
+    local first=runActiveWho(2)
+    assert(VoidLinkRemoteWhoPrompt:IsShown(),'unclicked request was completed')
+    assert(runButton(),'next request is not waiting for a click')
+    local second=runActiveWho()
+    state.sent={}; replay(first); replay(second)
+    assert(#state.sent==2)
+    assert(state.sent[1].channel=='PARTY' and state.sent[2].channel=='GUILD')
+end)
+test('unknown legacy response stays local despite selected guild forwarding',function()
+    DB.guildRelay=true; state.faction='Horde'; state.sent={}; DEFAULT_CHAT_FRAME.messages={}
+    emit('BN_CHAT_MSG_ADDON','AHREL1',table.concat({'WR','PN','Unmatchedlookup'},'\031'),123)
+    assert(#state.sent==0,'unmatched WHO result leaked to guild')
+    assert(table.concat(DEFAULT_CHAT_FRAME.messages,'\n'):find('Unmatchedlookup',1,true))
+end)
+test('legacy sender reply still honors a known party request',function()
+    DB.guildRelay=true
+    startRequest('Legacylookup','CHAT_MSG_PARTY')
+    emit('BN_CHAT_MSG_ADDON','AHREL1',table.concat({'WR','PN','Legacylookup'},'\031'),123)
+    assert(output('PARTY')=='[WHO] Legacylookup — not found / offline')
+end)
+test('slash WHO preserves explicitly selected default outputs',function()
+    DB.guildRelay=true
+    query('Slashlookup')
+    assert(output('GUILD')=='[WHO] Slashlookup — not found / offline')
+end)
+test('receiver reload retains original party channel from sender context',function()
+    DB.guildRelay=true; state.grouped=true
+    local request=startRequest('polterge','CHAT_MSG_PARTY')
+    queueRequest(request)
+    local packets=runActiveWho()
+    -- Recreate only the receiver event handler to emulate losing its pending
+    -- queue at /reload while retaining the saved forwarding settings.
+    for _,f in ipairs(state.frames) do
+        if f.events.CHAT_MSG_RAID then f.events={} end
+    end
+    state.faction='Horde'
+    assert(loadfile('HordeRelayReceiver.lua'))('VoidLink')
+    emit('ADDON_LOADED','VoidLink')
+    state.sent={}; replay(packets)
+    assert(output('PARTY')=='[WHO] polterge — not found / offline')
 end)
 
 print(string.format('WHO results: %d passed, %d failed',passed,failed))

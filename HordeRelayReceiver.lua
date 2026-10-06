@@ -11,8 +11,14 @@ local history = {}
 local forwardingErrors = {}
 local allianceSenderGameAccountID = nil
 local allianceSpyCharacterName = nil
-local remoteWhoState = { mode="", filter="", noobs=0, sixties=0, zone="", names={}, plainNames={}, shown=0, total=0 }
+local function NewWhoState()
+    return {mode="",filter="",noobs=0,sixties=0,zone="",names={},plainNames={},shown=0,total=0}
+end
+local legacyWhoState = NewWhoState()
 local pendingWhoReplies = {}
+local whoRepliesByID = {}
+local completedWhoReplies = {}
+local whoRequestSequence = 0
 local remotePlayerCache = {}
 local lastHeartbeat = nil
 local connectionLost = false
@@ -972,10 +978,46 @@ local function CurrentWhoReply()
     return pendingWhoReplies[1]
 end
 
-local function CompleteWhoReply()
-    if #pendingWhoReplies>0 then
-        table.remove(pendingWhoReplies,1)
+local function CompleteWhoReply(reply)
+    if not reply then return end
+    for i,item in ipairs(pendingWhoReplies) do
+        if item==reply then
+            table.remove(pendingWhoReplies,i)
+            break
+        end
     end
+    if reply.id then
+        whoRepliesByID[reply.id]=nil
+        completedWhoReplies[reply.id]=GetTime()
+    end
+end
+
+local WHO_REPLY_CHANNELS={PARTY=true,RAID=true,GUILD=true,SAY=true,YELL=true,CHANNEL=true}
+
+local function ResolveWhoReply(p)
+    local n=#p
+    if p[n-3]~="RQ" then return CurrentWhoReply() end
+    local id=p[n-2]
+    if not id or id=="" then return nil end
+    local now=GetTime()
+    for key,stamp in pairs(completedWhoReplies) do
+        if now-stamp>300 then completedWhoReplies[key]=nil end
+    end
+    if completedWhoReplies[id] then return nil,true end
+    local reply=whoRepliesByID[id]
+    if not reply then
+        -- A receiver reload can discard its pending queue. The sender carries
+        -- the original channel so that reply still reaches its requester.
+        local channel=p[n-1]
+        local target=tonumber(p[n])
+        local route
+        if WHO_REPLY_CHANNELS[channel] and (channel~="CHANNEL" or (target and target>0)) then
+            route={channel=channel,target=target}
+        end
+        reply={id=id,route=route,state=NewWhoState()}
+        whoRepliesByID[id]=reply
+    end
+    return reply
 end
 
 local function SendRemoteWhoQuery(query, replyRoute, requesterName, sourceLabel)
@@ -990,12 +1032,30 @@ local function SendRemoteWhoQuery(query, replyRoute, requesterName, sourceLabel)
         return
     end
 
+    whoRequestSequence=whoRequestSequence+1
+    local requestID=tostring(time())..":"..tostring(GetTime())..":"..tostring(whoRequestSequence)
+    local reply={
+        id=requestID,
+        route=replyRoute,
+        allowBroadcast=replyRoute==nil,
+        requester=BareName(requesterName or UnitName("player") or ""),
+        source=tostring(sourceLabel or "Local"),
+        query=query,
+        state=NewWhoState(),
+    }
+    -- Register before transport to keep immediate responses tied to this
+    -- request as well as ordinary asynchronous Battle.net responses.
+    pendingWhoReplies[#pendingWhoReplies+1]=reply
+    whoRepliesByID[requestID]=reply
     local payload=table.concat({
         "WQ",
         query,
         tostring(OwnGameAccountID() or ""),
         tostring(requesterName or UnitName("player") or ""),
-        tostring(sourceLabel or "Local")
+        tostring(sourceLabel or "Local"),
+        requestID,
+        tostring(replyRoute and replyRoute.channel or "LOCAL"),
+        tostring(replyRoute and replyRoute.target or ""),
     },"\031")
     local ok,result
 
@@ -1006,19 +1066,15 @@ local function SendRemoteWhoQuery(query, replyRoute, requesterName, sourceLabel)
     elseif C_BattleNet and C_BattleNet.SendGameData then
         ok,result=pcall(C_BattleNet.SendGameData,allianceSenderGameAccountID,PREFIX,payload)
     else
+        CompleteWhoReply(reply)
         AddWhoOutput("|cffff7777WHO:|r Battle.net send API unavailable.")
         return
     end
 
     if ok then
-        pendingWhoReplies[#pendingWhoReplies+1]={
-            route=replyRoute,
-            requester=BareName(requesterName or UnitName("player") or ""),
-            source=tostring(sourceLabel or "Local"),
-            query=query,
-        }
         AddWhoOutput("|cff888888WHO > "..query.."|r")
     else
+        CompleteWhoReply(reply)
         AddWhoOutput("|cffff7777WHO query failed:|r "..tostring(result))
     end
 end
@@ -1046,7 +1102,7 @@ AddWhoOutput=function(line)
     end
 end
 
-local function PublishWhoResult(localLine,publicLine)
+local function PublishWhoResult(localLine,publicLine,reply)
     scroll:AddMessage(localLine)
 
     local sent=false
@@ -1055,22 +1111,20 @@ local function PublishWhoResult(localLine,publicLine)
 
     -- A WHO command typed into chat replies to that same chat destination.
     -- Example: Guild -> Guild, Party -> Party, Raid -> Raid.
-    local reply=CurrentWhoReply()
     local route=reply and reply.route
     if route and route.channel then
         sent=SendRelayChat(publicLine,route.channel,route.target)==true
-    else
+    elseif reply and reply.allowBroadcast then
+        -- Only a locally issued slash/dropdown request uses selected outputs.
+        -- An unmatched response must never fall through to the guild toggle.
         if DB.partyRelay and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_HOME) and not (IsInRaid and IsInRaid()) then
-            SendRelayChat(publicLine,"PARTY")
-            sent=true
+            sent=SendRelayChat(publicLine,"PARTY")==true or sent
         end
         if DB.raidRelay and IsInRaid and IsInRaid() then
-            SendRelayChat(publicLine,"RAID")
-            sent=true
+            sent=SendRelayChat(publicLine,"RAID")==true or sent
         end
         if DB.guildRelay and IsInGuild and IsInGuild() then
-            SendRelayChat(publicLine,"GUILD")
-            sent=true
+            sent=SendRelayChat(publicLine,"GUILD")==true or sent
         end
     end
 
@@ -1079,40 +1133,40 @@ local function PublishWhoResult(localLine,publicLine)
     end
 end
 
-local function PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
+local function PublishWhoZoneSummary(whoState,reply,zoneLabel,noobs,sixties,capNote,publicCap)
     local localBase="|cff66ccff[WHO]|r |cffffffff"..zoneLabel.."|r: "
     local publicBase="[WHO] "..zoneLabel..": "
-    if remoteWhoState.filter~="60" then
+    if whoState.filter~="60" then
         localBase=localBase.."|cffffcc00"..tostring(noobs).." noobs|r / "
         publicBase=publicBase..tostring(noobs).." noobs / "
     end
     localBase=localBase.."|cff66ff66"..tostring(sixties).." 60s|r"
     publicBase=publicBase..tostring(sixties).." 60s"
 
-    if #remoteWhoState.names==0 then
-        PublishWhoResult(localBase..capNote,publicBase..publicCap)
+    if #whoState.names==0 then
+        PublishWhoResult(localBase..capNote,publicBase..publicCap,reply)
         return
     end
 
-    local localNames=table.concat(remoteWhoState.names,",")
-    local publicNames=table.concat(remoteWhoState.plainNames,",")
+    local localNames=table.concat(whoState.names,",")
+    local publicNames=table.concat(whoState.plainNames,",")
     local publicLine=publicBase..": "..publicNames..publicCap
 
     -- Most zone reports fit in one line. Only split when the WoW chat limit
     -- would actually be exceeded, and keep the continuation tiny.
     if #publicLine<=240 then
-        PublishWhoResult(localBase..": "..localNames..capNote,publicLine)
+        PublishWhoResult(localBase..": "..localNames..capNote,publicLine,reply)
         return
     end
 
-    PublishWhoResult(localBase..capNote,publicBase..publicCap)
+    PublishWhoResult(localBase..capNote,publicBase..publicCap,reply)
 
     local chunk={}
     local chunkLen=0
-    for i,name in ipairs(remoteWhoState.plainNames) do
+    for i,name in ipairs(whoState.plainNames) do
         local add=(#chunk==0 and 0 or 1)+#name
         if #chunk>0 and (chunkLen+add)>220 then
-            PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","))
+            PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","),reply)
             chunk={}
             chunkLen=0
         end
@@ -1120,12 +1174,15 @@ local function PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
         chunkLen=chunkLen+add
     end
     if #chunk>0 then
-        PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","))
+        PublishWhoResult("|cff888888↳ |r"..table.concat(chunk,","),"↳ "..table.concat(chunk,","),reply)
     end
 end
 
 local function HandleRemoteWhoResponse(p)
     local subtype=p[2]
+    local reply,completed=ResolveWhoReply(p)
+    if completed then return end
+    local whoState=reply and reply.state or legacyWhoState
 
     if subtype=="Q" then
         local kind=p[3] or "?"
@@ -1144,7 +1201,7 @@ local function HandleRemoteWhoResponse(p)
 
     if subtype=="X" then
         local reason=tostring(p[3] or ""):upper()
-        local query=p[4] or ((CurrentWhoReply() and CurrentWhoReply().query) or "?")
+        local query=p[4] or (reply and reply.query) or "?"
         if reason=="TIMEOUT" then
             AddWhoOutput("|cff888888[WHO]|r "..tostring(query).." expired on sender.")
         elseif reason=="IGNORED" then
@@ -1152,7 +1209,7 @@ local function HandleRemoteWhoResponse(p)
         else
             AddWhoOutput("|cff888888[WHO]|r "..tostring(query).." cancelled.")
         end
-        CompleteWhoReply()
+        CompleteWhoReply(reply)
         return
     end
 
@@ -1163,7 +1220,7 @@ local function HandleRemoteWhoResponse(p)
         local shown=tonumber(p[6] or "0") or 0
         local total=tonumber(p[7] or tostring(shown)) or shown
         local filter=p[8] or ""
-        remoteWhoState={
+        whoState={
             mode="zone",
             filter=filter,
             noobs=noobs,
@@ -1174,24 +1231,25 @@ local function HandleRemoteWhoResponse(p)
             shown=shown,
             total=total
         }
+        if reply then reply.state=whoState else legacyWhoState=whoState end
         return
     end
 
     if subtype=="ZP" then
         local name=p[3] or "?"
         local class=p[4] or ""
-        local zone=p[5] or remoteWhoState.zone
+        local zone=p[5] or whoState.zone
         RememberRemotePlayer(name,60,class)
         local shortClass=ClassAbbr(class)
-        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
-        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        whoState.names[#whoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        whoState.plainNames[#whoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
         return
     end
 
     if subtype=="ZT" then
-        local noobs=tonumber(remoteWhoState.noobs) or 0
-        local sixties=tonumber(remoteWhoState.sixties) or 0
-        local zone=remoteWhoState.zone~="" and remoteWhoState.zone or "?"
+        local noobs=tonumber(whoState.noobs) or 0
+        local sixties=tonumber(whoState.sixties) or 0
+        local zone=whoState.zone~="" and whoState.zone or "?"
         local zoneLabel=AbbrevZone(zone)
         local capNote=""
         if p[3] and p[3]~="" then
@@ -1199,9 +1257,9 @@ local function HandleRemoteWhoResponse(p)
         end
         local publicCap=(p[3] and p[3]~="") and " (capped)" or ""
 
-        PublishWhoZoneSummary(zoneLabel,noobs,sixties,capNote,publicCap)
+        PublishWhoZoneSummary(whoState,reply,zoneLabel,noobs,sixties,capNote,publicCap)
 
-        CompleteWhoReply()
+        CompleteWhoReply(reply)
         return
     end
 
@@ -1218,8 +1276,8 @@ local function HandleRemoteWhoResponse(p)
         local publicLine="[WHO] "..BareName(name)
             .."("..tostring(shortClass~="" and shortClass or "?")..")"
             .." | Lv"..tostring(level or "?").." | "..tostring(zone)
-        PublishWhoResult(localLine,publicLine)
-        CompleteWhoReply()
+        PublishWhoResult(localLine,publicLine,reply)
+        CompleteWhoReply(reply)
         return
     end
 
@@ -1227,9 +1285,9 @@ local function HandleRemoteWhoResponse(p)
         local name=p[3] or "?"
         PublishWhoResult(
             "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777not found / offline|r",
-            "[WHO] "..tostring(name).." — not found / offline"
+            "[WHO] "..tostring(name).." — not found / offline",reply
         )
-        CompleteWhoReply()
+        CompleteWhoReply(reply)
         return
     end
 
@@ -1238,16 +1296,17 @@ local function HandleRemoteWhoResponse(p)
         local normalized=p[4] or p[3] or "?"
         PublishWhoResult(
             "|cffff7777WHO DB|r "..normalized..": no cached players found.",
-            "[WHO] "..normalized..": no cached players found."
+            "[WHO] "..normalized..": no cached players found.",reply
         )
-        CompleteWhoReply()
+        CompleteWhoReply(reply)
         return
     end
 
     if subtype=="H" then
         local normalized=p[4] or p[3] or "?"
         local count=tonumber(p[5] or "0") or 0
-        remoteWhoState={mode="legacy",filter="",total=count,noobs=0,sixties=0,zone=normalized,names={},plainNames={},shown=count}
+        whoState={mode="legacy",filter="",total=count,noobs=0,sixties=0,zone=normalized,names={},plainNames={},shown=count}
+        if reply then reply.state=whoState else legacyWhoState=whoState end
         return
     end
 
@@ -1257,17 +1316,17 @@ local function HandleRemoteWhoResponse(p)
         local class=p[5] or ""
         RememberRemotePlayer(name,level,class)
         local shortClass=ClassAbbr(class)
-        remoteWhoState.names[#remoteWhoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
-        remoteWhoState.plainNames[#remoteWhoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        whoState.names[#whoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        whoState.plainNames[#whoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
         return
     end
 
     if subtype=="T" then
         PublishWhoResult(
-            "|cff66ff66WHO DB|r "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached",
-            "[WHO DB] "..tostring(remoteWhoState.zone)..": "..tostring(remoteWhoState.total).." cached"
+            "|cff66ff66WHO DB|r "..tostring(whoState.zone)..": "..tostring(whoState.total).." cached",
+            "[WHO DB] "..tostring(whoState.zone)..": "..tostring(whoState.total).." cached",reply
         )
-        CompleteWhoReply()
+        CompleteWhoReply(reply)
         return
     end
 end

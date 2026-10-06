@@ -34,6 +34,7 @@ local pendingRemoteWhoFilter = nil
 local pendingRemoteWhoSourceName = nil
 local pendingRemoteWhoSourceLabel = nil
 local pendingRemoteWhoToken = 0
+local pendingRemoteWhoClicked = false
 local remoteWhoRequestQueue = {}
 local ActivateNextRemoteWho
 local FinishActiveRemoteWho
@@ -41,6 +42,7 @@ local RemoteWhoQueueCount
 local remoteWhoPrompt = nil
 local remoteWhoPromptText = nil
 local remoteWhoPromptButton = nil
+local remoteWhoPromptIgnoreButton = nil
 local remoteWhoPromptStatus = nil
 local whoCache = {}
 local pendingWho = {}
@@ -1260,6 +1262,7 @@ local function ClearPendingRemoteWho()
     pendingRemoteWhoRequesterID=nil
     pendingRemoteWhoSourceName=nil
     pendingRemoteWhoSourceLabel=nil
+    pendingRemoteWhoClicked=false
 end
 
 local function SendLiveRemoteWhoResults()
@@ -1367,7 +1370,12 @@ local function RunPendingRemoteWho()
     end
 
     if ok then
-        if remoteWhoPromptButton then remoteWhoPromptButton:SetText("Waiting...") end
+        pendingRemoteWhoClicked=true
+        if remoteWhoPromptButton then
+            remoteWhoPromptButton:SetText("Waiting...")
+            remoteWhoPromptButton:SetEnabled(false)
+        end
+        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(false) end
         if remoteWhoPromptStatus then
             local queued=RemoteWhoQueueCount()
             remoteWhoPromptStatus:SetText("WHO sent • waiting for results"..(queued>0 and (" • "..tostring(queued).." queued") or ""))
@@ -1451,6 +1459,7 @@ local function EnsureRemoteWhoPrompt()
     remoteWhoPrompt=box
     remoteWhoPromptText=textLine
     remoteWhoPromptButton=run
+    remoteWhoPromptIgnoreButton=ignore
     remoteWhoPromptStatus=statusLine
 end
 
@@ -1461,12 +1470,21 @@ local function RefreshRemoteWhoPrompt()
     end
 
     EnsureRemoteWhoPrompt()
-    remoteWhoPromptButton:SetText("Run WHO")
     remoteWhoPromptText:SetText(RemoteWhoPromptDescription())
 
     local queued=RemoteWhoQueueCount()
     local queueText=queued>0 and (" • "..tostring(queued).." queued") or ""
-    remoteWhoPromptStatus:SetText("Click Run WHO or Ignore • expires in 30s"..queueText)
+    if pendingRemoteWhoClicked then
+        remoteWhoPromptButton:SetText("Waiting...")
+        remoteWhoPromptButton:SetEnabled(false)
+        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(false) end
+        remoteWhoPromptStatus:SetText("WHO sent • waiting for results"..queueText)
+    else
+        remoteWhoPromptButton:SetText("Run WHO")
+        remoteWhoPromptButton:SetEnabled(true)
+        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(true) end
+        remoteWhoPromptStatus:SetText("Click Run WHO or Ignore • expires in 30s"..queueText)
+    end
     remoteWhoPrompt:Show()
 end
 
@@ -1489,6 +1507,7 @@ ActivateNextRemoteWho=function()
     pendingRemoteWhoRequesterID=item.requesterID
     pendingRemoteWhoSourceName=item.sourceName
     pendingRemoteWhoSourceLabel=item.sourceLabel
+    pendingRemoteWhoClicked=false
 
     pendingRemoteWhoToken=pendingRemoteWhoToken+1
     local token=pendingRemoteWhoToken
@@ -1496,7 +1515,7 @@ ActivateNextRemoteWho=function()
 
     C_Timer.After(30,function()
         if pendingRemoteWhoKind and pendingRemoteWhoToken==token
-            and remoteWhoPromptButton and remoteWhoPromptButton:GetText()=="Run WHO"
+            and not pendingRemoteWhoClicked
         then
             FinishActiveRemoteWho("TIMEOUT")
         end

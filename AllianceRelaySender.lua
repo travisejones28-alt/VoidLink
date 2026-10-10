@@ -1382,11 +1382,21 @@ local function RunPendingRemoteWho()
 
     if ok then
         pendingRemoteWhoClicked=true
+        local activeToken=pendingRemoteWhoToken
+        -- The original 30-second timeout only covers the unclicked prompt.
+        -- After sending, a missing WHO_LIST_UPDATE must not stall the queue.
+        C_Timer.After(20,function()
+            if pendingRemoteWhoKind and pendingRemoteWhoClicked
+                and pendingRemoteWhoToken==activeToken then
+                Print("WHO results timeout: "..tostring(pendingRemoteWhoValue or "?"))
+                FinishActiveRemoteWho("TIMEOUT")
+            end
+        end)
         if remoteWhoPromptButton then
             remoteWhoPromptButton:SetText("Waiting...")
             remoteWhoPromptButton:SetEnabled(false)
         end
-        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(false) end
+        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(true) end
         if remoteWhoPromptStatus then
             local queued=RemoteWhoQueueCount()
             remoteWhoPromptStatus:SetText("WHO sent • waiting for results"..(queued>0 and (" • "..tostring(queued).." queued") or ""))
@@ -1488,7 +1498,7 @@ local function RefreshRemoteWhoPrompt()
     if pendingRemoteWhoClicked then
         remoteWhoPromptButton:SetText("Waiting...")
         remoteWhoPromptButton:SetEnabled(false)
-        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(false) end
+        if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(true) end
         remoteWhoPromptStatus:SetText("WHO sent • waiting for results"..queueText)
     else
         remoteWhoPromptButton:SetText("Run WHO")

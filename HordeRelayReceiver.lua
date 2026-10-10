@@ -1284,8 +1284,8 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="PN" then
         local name=p[3] or "?"
         PublishWhoResult(
-            "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777not found / offline|r",
-            "[WHO] "..tostring(name).." — not found / offline",reply
+            "|cff66ccff[WHO]|r "..tostring(name).." — |cffff7777no live WHO match|r",
+            "[WHO] "..tostring(name).." — no live WHO match",reply
         )
         CompleteWhoReply(reply)
         return

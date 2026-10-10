@@ -274,6 +274,9 @@ end
 -- unknown falls back to a player-name WHO lookup.
 local function ParseRemoteWhoRequest(query)
     local raw=tostring(query or ""):match("^%s*(.-)%s*$") or ""
+    -- Chat WHO requests are natural-language questions. Do not pass trailing
+    -- sentence punctuation into the Blizzard player/zone search.
+    raw=raw:gsub("[%?%!%.,;:]+%s*$",""):match("^%s*(.-)%s*$") or ""
     if raw=="" then return "",nil end
 
     local tokens={}

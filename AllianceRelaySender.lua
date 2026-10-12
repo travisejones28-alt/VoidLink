@@ -876,7 +876,7 @@ local function BroadcastLiveWhoKOSRoster()
         if info and (info.fullName or info.name) then
             entries[#entries+1] = table.concat({"WK",Clean(info.fullName or info.name),
                 Clean(info.level or ""),Clean(info.classStr or info.class or ""),
-                Clean(info.area or info.zone or "")},"\\031")
+                Clean(info.area or info.zone or "")},"\031")
         end
     end
     for i, packet in ipairs(entries) do

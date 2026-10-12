@@ -1306,6 +1306,8 @@ local function SendLiveRemoteWhoResults()
                         matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or value}
                     elseif lvl and lvl<60 then
                         noobs=noobs+1
+                        -- Private KOS matching needs all WHO levels, not just 60s.
+                        matches[#matches+1]={name=name,level=lvl,class=class or "",zone=zone or value,sub60=true}
                     end
                 end
             elseif StripRealm(name):lower()==wantName then
@@ -1329,9 +1331,16 @@ local function SendLiveRemoteWhoResults()
 
         -- Both zone queries include the visible level-60 names/classes.
         for _,info in ipairs(matches) do
-            SendRemoteWhoPacket(requesterID,{
-                "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
-            },replyContext)
+            if info.sub60 then
+                -- ZK is a private roster record, never printed in WHO chat.
+                SendRemoteWhoPacket(requesterID,{
+                    "WR","ZK",Clean(info.name),Clean(info.level),Clean(info.class),Clean(info.zone)
+                },replyContext)
+            else
+                SendRemoteWhoPacket(requesterID,{
+                    "WR","ZP",Clean(info.name),Clean(info.class),Clean(info.zone)
+                },replyContext)
+            end
         end
 
         local tail=""

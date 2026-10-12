@@ -1,7 +1,7 @@
 -- Repush: faction-based auto-connect transport confirmed
 
 local ADDON_NAME = ...
-local PREFIX = "AHREL1"
+local PREFIX = (VoidLink and VoidLink.GetTransportPrefix and VoidLink:GetTransportPrefix()) or "VLUNCONFIGURED"
 
 HordeRelayReceiverDB = HordeRelayReceiverDB or {}
 local DB
@@ -2157,7 +2157,7 @@ f:SetScript("OnEvent",function(self,event,...)
                 .." argc="..tostring(#args))
         end
 
-        if prefix==PREFIX and payload then
+        if PREFIX and prefix==PREFIX and payload then
             HandlePayload(payload,senderID)
         end
         return

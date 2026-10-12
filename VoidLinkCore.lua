@@ -13,6 +13,8 @@ local defaults = {
     nativeChatLogging = true,
     chatRetentionDays = 30,
     chatMaxPerDay = 5000,
+    independentPairing = false,
+    privatePairCode = "",
 }
 
 -- The default role follows the logged-in character's faction.
@@ -130,8 +132,15 @@ function M:LogChat(kind, zone, author, text, direction)
     }
 end
 
+function M:GetTransportPrefix()
+    if not DB.independentPairing then return "AHREL1" end
+    local code=tostring(DB.privatePairCode or ""):upper()
+    if #code<6 or #code>12 or not code:match("^[A-Z0-9]+$") then return nil end
+    return "VL"..code
+end
+
 local panel = CreateFrame("Frame","VoidLinkControlPanel",UIParent,"BackdropTemplate")
-panel:SetSize(340,260)
+panel:SetSize(360,355)
 panel:SetPoint("CENTER")
 panel:SetFrameStrata("DIALOG")
 panel:SetMovable(true)
@@ -217,6 +226,37 @@ chatBtn:SetScript("OnClick",function()
     end
 end)
 
+local privateToggle=CreateFrame("CheckButton",nil,panel,"UICheckButtonTemplate")
+privateToggle:SetPoint("TOPLEFT",22,-222)
+privateToggle:SetSize(26,26)
+local privateLabel=panel:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+privateLabel:SetPoint("LEFT",privateToggle,"RIGHT",5,0)
+privateLabel:SetText("Independent pairing")
+local privateHint=panel:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+privateHint:SetPoint("TOPLEFT",30,-255)
+privateHint:SetText("Same code on BOTH accounts (6-12 letters/numbers):")
+local privateCode=CreateFrame("EditBox",nil,panel,"InputBoxTemplate")
+privateCode:SetSize(165,24)
+privateCode:SetPoint("TOPLEFT",36,-277)
+privateCode:SetAutoFocus(false)
+privateCode:SetMaxLetters(12)
+privateCode:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
+local privateSave=CreateFrame("Button",nil,panel,"UIPanelButtonTemplate")
+privateSave:SetSize(110,25)
+privateSave:SetPoint("LEFT",privateCode,"RIGHT",14,0)
+privateSave:SetText("Save / Reload")
+privateSave:SetScript("OnClick",function()
+    local enabled=privateToggle:GetChecked() and true or false
+    local code=tostring(privateCode:GetText() or ""):upper():gsub("%s+","")
+    if enabled and (#code<6 or #code>12 or not code:match("^[A-Z0-9]+$")) then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555VoidLink:|r Enter a valid 6-12 character code.")
+        return
+    end
+    DB.privatePairCode=code
+    DB.independentPairing=enabled
+    if ReloadUI then ReloadUI() end
+end)
+
 local closeBtn = CreateFrame("Button",nil,panel,"UIPanelButtonTemplate")
 closeBtn:SetSize(80,24)
 closeBtn:SetPoint("BOTTOM",0,16)
@@ -224,6 +264,8 @@ closeBtn:SetText("Close")
 closeBtn:SetScript("OnClick",function() panel:Hide() end)
 
 local function RefreshPanel()
+    privateToggle:SetChecked(DB.independentPairing and true or false)
+    privateCode:SetText(tostring(DB.privatePairCode or ""))
     modeText:SetText("Active mode: |cffffffff"..string.upper(DB.mode or "receiver").."|r")
     senderBtn:SetEnabled(DB.mode ~= "sender")
     receiverBtn:SetEnabled(DB.mode ~= "receiver")

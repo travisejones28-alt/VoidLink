@@ -36,6 +36,8 @@ local pendingRemoteWhoSourceLabel = nil
 local pendingRemoteWhoReplyContext = nil
 local pendingRemoteWhoToken = 0
 local pendingRemoteWhoClicked = false
+local pendingRemoteWhoOwner = false
+local pendingRemoteWhoTimeout = 30
 local remoteWhoRequestQueue = {}
 local ActivateNextRemoteWho
 local FinishActiveRemoteWho
@@ -1311,6 +1313,8 @@ local function ClearPendingRemoteWho()
     pendingRemoteWhoSourceLabel=nil
     pendingRemoteWhoReplyContext=nil
     pendingRemoteWhoClicked=false
+    pendingRemoteWhoOwner=false
+    pendingRemoteWhoTimeout=30
 end
 
 local function SendLiveRemoteWhoResults()
@@ -1574,7 +1578,7 @@ local function RefreshRemoteWhoPrompt()
         remoteWhoPromptButton:SetText("Run WHO")
         remoteWhoPromptButton:SetEnabled(true)
         if remoteWhoPromptIgnoreButton then remoteWhoPromptIgnoreButton:SetEnabled(true) end
-        remoteWhoPromptStatus:SetText("Click Run WHO or Ignore • expires in 30s"..queueText)
+        remoteWhoPromptStatus:SetText((pendingRemoteWhoOwner and "Your WHO" or "Party WHO").." • Click Run WHO or Ignore • expires in "..tostring(pendingRemoteWhoTimeout).."s"..queueText)
     end
     remoteWhoPrompt:Show()
 end
@@ -1600,12 +1604,14 @@ ActivateNextRemoteWho=function()
     pendingRemoteWhoSourceLabel=item.sourceLabel
     pendingRemoteWhoReplyContext=item.replyContext
     pendingRemoteWhoClicked=false
+    pendingRemoteWhoOwner=item.isOwner==true
+    pendingRemoteWhoTimeout=pendingRemoteWhoOwner and 120 or 30
 
     pendingRemoteWhoToken=pendingRemoteWhoToken+1
     local token=pendingRemoteWhoToken
     RefreshRemoteWhoPrompt()
 
-    C_Timer.After(30,function()
+    C_Timer.After(pendingRemoteWhoTimeout,function()
         if pendingRemoteWhoKind and pendingRemoteWhoToken==token
             and not pendingRemoteWhoClicked
         then
@@ -2252,6 +2258,7 @@ f:SetScript("OnEvent",function(self,event,...)
                     sourceName=sourceName,
                     sourceLabel=sourceLabel,
                     replyContext=replyContext,
+                    isOwner=(p[9]=="OWNER"),
                 })
 
                 SendRemoteWhoPacket(requesterID,{

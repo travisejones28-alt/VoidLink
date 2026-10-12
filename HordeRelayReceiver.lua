@@ -1178,6 +1178,28 @@ local function PublishWhoZoneSummary(whoState,reply,zoneLabel,noobs,sixties,capN
     end
 end
 
+-- Forward WHO roster privately to party/raid VoidMark clients.
+-- Never put sub-60 roster entries into normal chat.
+local kosRosterSequence = 0
+local function RelayWhoKOS(name, level, class, zone)
+    if not name or name == "" or name == "?" then return end
+    if _G.VoidMarkKOS_OnWhoResult then
+        _G.VoidMarkKOS_OnWhoResult(name, level, class, zone)
+    end
+    local channel = IsInRaid() and "RAID" or (IsInGroup() and "PARTY" or nil)
+    if not channel then return end
+    local send = C_ChatInfo and C_ChatInfo.SendAddonMessage or SendAddonMessage
+    if type(send) ~= "function" then return end
+    local packet = table.concat({"W",tostring(zone or ""),tostring(name),tostring(level or ""),tostring(class or "")},"\031")
+    -- Modest spacing prevents an entire WHO roster hitting addon chat in one frame.
+    kosRosterSequence = kosRosterSequence + 1
+    local sequence = kosRosterSequence
+    C_Timer.After(math.min(sequence, 75)*0.10, function()
+        if IsInGroup() then pcall(send, "VMKOS1",packet,channel) end
+        if sequence == kosRosterSequence then kosRosterSequence = 0 end
+    end)
+end
+
 local function HandleRemoteWhoResponse(p)
     local subtype=p[2]
     local reply,completed=ResolveWhoReply(p)
@@ -1240,9 +1262,21 @@ local function HandleRemoteWhoResponse(p)
         local class=p[4] or ""
         local zone=p[5] or whoState.zone
         RememberRemotePlayer(name,60,class)
+        RelayWhoKOS(name,60,class,zone)
         local shortClass=ClassAbbr(class)
         whoState.names[#whoState.names+1]=ColorName(name,class).."("..tostring(shortClass~="" and shortClass or "?")..")"
         whoState.plainNames[#whoState.plainNames+1]=BareName(name).."("..tostring(shortClass~="" and shortClass or "?")..")"
+        return
+    end
+
+    if subtype=="ZK" then
+        -- Extra lower-level WHO record, deliberately excluded from public WHO output.
+        local name=p[3] or "?"
+        local level=tonumber(p[4] or "")
+        local class=p[5] or ""
+        local zone=p[6] or whoState.zone
+        RememberRemotePlayer(name,level,class)
+        RelayWhoKOS(name,level,class,zone)
         return
     end
 
@@ -1269,6 +1303,7 @@ local function HandleRemoteWhoResponse(p)
         local class=p[5] or "?"
         local zone=p[6] or "?"
         RememberRemotePlayer(name,level,class)
+        RelayWhoKOS(name,level,class,zone)
         local shortClass=ClassAbbr(class)
         local localLine="|cff66ccff[WHO]|r "..ColorName(name,class)
             .."("..tostring(shortClass~="" and shortClass or "?")..")"

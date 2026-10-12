@@ -1193,7 +1193,7 @@ local function RelayWhoKOS(name, level, class, zone, reply)
         if recipient and recipient ~= "" then
             if BareName(recipient):lower() == myself then
                 if _G.VoidMarkKOS_OnWhoResult then
-                    _G.VoidMarkKOS_OnWhoResult(name, level, class, zone)
+                    _G.VoidMarkKOS_OnWhoResult(name, level, class, zone, true)
                 end
             else
                 local send = C_ChatInfo and C_ChatInfo.SendAddonMessage or SendAddonMessage

@@ -1056,6 +1056,7 @@ local function SendRemoteWhoQuery(query, replyRoute, requesterName, sourceLabel)
         requestID,
         tostring(replyRoute and replyRoute.channel or "LOCAL"),
         tostring(replyRoute and replyRoute.target or ""),
+        (BareName(requesterName or UnitName("player") or ""):lower()==BareName(UnitName("player") or ""):lower()) and "OWNER" or "GUEST",
     },"\031")
     local ok,result
 

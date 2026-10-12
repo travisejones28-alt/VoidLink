@@ -1596,6 +1596,16 @@ local function HandlePayload(payload,senderID)
         return
     end
 
+    if p[1]=="WK" then
+        -- An ordinary/manual WHO roster entry, not a public WHO response.
+        local name,level,class,zone=p[2],tonumber(p[3]),p[4],p[5]
+        if name and name~="" and zone and zone~="" then
+            RememberRemotePlayer(name,level,class)
+            RelayWhoKOS(name,level,class,zone)
+        end
+        return
+    end
+
     if p[1]=="WR" then
         HandleRemoteWhoResponse(p)
         return

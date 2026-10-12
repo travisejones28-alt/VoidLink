@@ -8,7 +8,6 @@ local M = VoidLink
 local DB = VoidLinkDB
 
 local defaults = {
-    mode = "receiver",
     minimapAngle = 225,
     chatLogging = true,
     nativeChatLogging = true,
@@ -16,24 +15,39 @@ local defaults = {
     chatMaxPerDay = 5000,
 }
 
-local function ApplyDefaults()
-    -- Restore the dedicated role variable first. This gives the role selector
-    -- a second persistent source of truth in case the DB table was recreated
-    -- or an older build left it incomplete.
-    if VoidLinkMode == "sender" or VoidLinkMode == "receiver" then
-        DB.mode = VoidLinkMode
-    end
+-- The default role follows the logged-in character's faction.
+-- Manual role changes are stored per character so changing one character
+-- cannot accidentally change the role of characters on the other faction.
+local function CharacterKey()
+    local name = UnitName("player")
+    if not name or name == "" then return nil end
+    return tostring(GetRealmName() or "") .. ":" .. name
+end
 
+local function FactionMode()
+    local faction = UnitFactionGroup("player")
+    if faction == "Alliance" then return "sender" end
+    if faction == "Horde" then return "receiver" end
+    return nil
+end
+
+local function ApplyDefaults()
     for k,v in pairs(defaults) do
         if DB[k] == nil then DB[k] = v end
     end
 
-    if DB.mode ~= "sender" and DB.mode ~= "receiver" then
-        DB.mode = "receiver"
-    end
+    local key = CharacterKey()
+    local overrides = DB.characterModeOverrides
+    local override = key and type(overrides) == "table" and overrides[key]
+    local mode = (override == "sender" or override == "receiver") and override or FactionMode()
 
-    -- Keep both saved values synchronized on every load.
-    VoidLinkMode = DB.mode
+    -- The faction may not yet be known while Lua files first load.
+    -- PLAYER_LOGIN reapplies this once the character is available.
+    if not mode then
+        mode = (DB.mode == "sender" or DB.mode == "receiver") and DB.mode or "receiver"
+    end
+    DB.mode = mode
+    VoidLinkMode = mode
 end
 
 ApplyDefaults()
@@ -148,6 +162,11 @@ local function SetMode(mode)
     -- Write through both the local table reference and the SavedVariables
     -- globals before reloading. The dedicated scalar prevents the client from
     -- falling back to receiver if the table is rebuilt during reload.
+    local key = CharacterKey()
+    if key then
+        DB.characterModeOverrides = DB.characterModeOverrides or {}
+        DB.characterModeOverrides[key] = mode
+    end
     DB.mode = mode
     VoidLinkDB = VoidLinkDB or DB or {}
     VoidLinkDB.mode = mode
@@ -427,6 +446,7 @@ local chatKinds = {
 for event in pairs(chatKinds) do logger:RegisterEvent(event) end
 logger:SetScript("OnEvent",function(_,event,...)
     if event == "PLAYER_LOGIN" then
+        ApplyDefaults()
         StartNativeLog()
         LogPrint("Chat archive "..(DB.chatLogging and "ON" or "OFF")..
             "; text log "..((type(LoggingChat)=="function" and LoggingChat()) and "ON" or "OFF")..

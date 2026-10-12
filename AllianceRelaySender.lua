@@ -2280,7 +2280,13 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="WHO_LIST_UPDATE" then
         ReadWhoResults()
-        BroadcastLiveWhoKOSRoster()
+        -- Guild-requested scans must not leak their WHO roster to the
+        -- receiver's party via the normal manual-WHO broadcast.
+        if not (pendingRemoteWhoKind and pendingRemoteWhoClicked
+            and pendingRemoteWhoReplyContext
+            and pendingRemoteWhoReplyContext.channel=="GUILD") then
+            BroadcastLiveWhoKOSRoster()
+        end
 
         -- AllianceWhoScanner also receives WHO_LIST_UPDATE. Delay one frame so
         -- its cache is saved, then mirror it into this relay database.

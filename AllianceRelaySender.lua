@@ -863,6 +863,29 @@ local function ReadWhoResults()
     end
 end
 
+-- Normal/manual WHO scans also supply KOS intelligence, not just remote requests.
+local whoKOSBroadcastToken = 0
+local function BroadcastLiveWhoKOSRoster()
+    local shown = C_FriendList and C_FriendList.GetNumWhoResults and C_FriendList.GetNumWhoResults() or 0
+    if not C_FriendList or not C_FriendList.GetWhoInfo then return end
+    whoKOSBroadcastToken = whoKOSBroadcastToken + 1
+    local token = whoKOSBroadcastToken
+    local entries = {}
+    for i = 1, math.min(tonumber(shown) or 0, 50) do
+        local info = C_FriendList.GetWhoInfo(i)
+        if info and (info.fullName or info.name) then
+            entries[#entries+1] = table.concat({"WK",Clean(info.fullName or info.name),
+                Clean(info.level or ""),Clean(info.classStr or info.class or ""),
+                Clean(info.area or info.zone or "")},"\\031")
+        end
+    end
+    for i, packet in ipairs(entries) do
+        C_Timer.After(i * 0.12, function()
+            if token == whoKOSBroadcastToken then SendToReceivers(PREFIX, packet) end
+        end)
+    end
+end
+
 local function SendRemoteWhoDatabaseResults(query, requesterID)
     if not requesterID then return end
     local zone = NormalizeRemoteZone(query)
@@ -2215,6 +2238,7 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="WHO_LIST_UPDATE" then
         ReadWhoResults()
+        BroadcastLiveWhoKOSRoster()
 
         -- AllianceWhoScanner also receives WHO_LIST_UPDATE. Delay one frame so
         -- its cache is saved, then mirror it into this relay database.

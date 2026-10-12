@@ -1235,6 +1235,52 @@ local function HandleRemoteWhoResponse(p)
         return
     end
 
+    if subtype=="RH" then
+        whoState={mode="range",filter=p[4] or "",zone=p[3] or "?",
+            names={},plainNames={},shown=tonumber(p[5]) or 0,
+            total=tonumber(p[6]) or 0}
+        if reply then reply.state=whoState else legacyWhoState=whoState end
+        return
+    end
+
+    if subtype=="RP" then
+        local name,level,class,zone=p[3],tonumber(p[4]),p[5],p[6]
+        if name and name~="" then
+            RememberRemotePlayer(name,level,class)
+            RelayWhoKOS(name,level,class,zone or whoState.zone)
+            local shortClass=ClassAbbr(class or "")
+            whoState.plainNames[#whoState.plainNames+1]=BareName(name)
+                .."(Lv"..tostring(level or "?").." "..tostring(shortClass~="" and shortClass or "?")..")"
+        end
+        return
+    end
+
+    if subtype=="RT" then
+        local zone=AbbrevZone(whoState.zone or "?")
+        local filter=whoState.filter or "?"
+        local summary="[WHO] "..zone.." "..filter..": "..tostring(#whoState.plainNames).." shown"
+        if p[3] and p[3]~="" then summary=summary.." (capped)" end
+        PublishWhoResult("|cff66ccff"..summary.."|r",summary,reply)
+        local chunk={}
+        local size=0
+        for _,name in ipairs(whoState.plainNames) do
+            if size+#name+2>210 and #chunk>0 then
+                PublishWhoResult("|cff888888↳|r "..table.concat(chunk,", "),
+                    "↳ "..table.concat(chunk,", "),reply)
+                chunk={}
+                size=0
+            end
+            chunk[#chunk+1]=name
+            size=size+#name+2
+        end
+        if #chunk>0 then
+            PublishWhoResult("|cff888888↳|r "..table.concat(chunk,", "),
+                "↳ "..table.concat(chunk,", "),reply)
+        end
+        CompleteWhoReply(reply)
+        return
+    end
+
     if subtype=="ZH" then
         local zone=p[3] or "?"
         local noobs=tonumber(p[4] or "0") or 0

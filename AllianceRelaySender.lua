@@ -292,7 +292,16 @@ local function ParseRemoteWhoRequest(query)
         local lower=token:lower()
         local nextLower=tostring(tokens[i+1] or ""):lower()
 
-        if lower=="60" or lower=="60s" or lower=="lvl60"
+        local rangeLow,rangeHigh=lower:match("^(%d%d?)%-(%d%d?)$")
+        if (lower=="level" or lower=="lvl") and nextLower:match("^%d%d?%-%d%d?$") then
+            local a,b=nextLower:match("^(%d+)%-(%d+)$")
+            a,b=tonumber(a),tonumber(b)
+            if a and b and a>=1 and b<=60 and a<=b then filter=a.."-"..b end
+            i=i+1
+        elseif rangeLow and rangeHigh and tonumber(rangeLow)>=1
+            and tonumber(rangeHigh)<=60 and tonumber(rangeLow)<=tonumber(rangeHigh) then
+            filter=tonumber(rangeLow).."-"..tonumber(rangeHigh)
+        elseif lower=="60" or lower=="60s" or lower=="lvl60"
             or lower=="level60" or lower=="level-60"
         then
             filter="60"
@@ -1324,7 +1333,16 @@ local function SendLiveRemoteWhoResults()
             if kind=="zone" then
                 local lvl=tonumber(level)
                 if tostring(zone or "")==value then
-                    if lvl==60 then
+                    local minimum,maximum=tostring(filter or ""):match("^(%d+)%-(%d+)$")
+                    minimum,maximum=tonumber(minimum),tonumber(maximum)
+                    if minimum and maximum and lvl and lvl>=minimum and lvl<=maximum then
+                        -- Range queries return individual matching names rather than
+                        -- treating everything under 60 as an aggregate count only.
+                        matches[#matches+1]={name=name,level=lvl,class=class or "",zone=zone or value,sub60=true}
+                        noobs=noobs+1
+                    elseif minimum and maximum then
+                        -- Ignore unrelated cached/returned results.
+                    elseif lvl==60 then
                         sixties=sixties+1
                         matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or value}
                     elseif lvl and lvl<60 then
@@ -1340,6 +1358,22 @@ local function SendLiveRemoteWhoResults()
     end
 
     if kind=="zone" then
+        local rangeQuery=filter and filter:match("^%d+%-%d+$")
+        if rangeQuery then
+            SendRemoteWhoPacket(requesterID,{
+                "WR","RH",Clean(value),Clean(filter),tostring(shown),tostring(total or shown)
+            },replyContext)
+            for _,info in ipairs(matches) do
+                SendRemoteWhoPacket(requesterID,{
+                    "WR","RP",Clean(info.name),Clean(info.level),Clean(info.class),Clean(info.zone)
+                },replyContext)
+            end
+            SendRemoteWhoPacket(requesterID,{"WR","RT",
+                (tonumber(total) and total>shown) and "WHO results capped." or ""
+            },replyContext)
+            FinishActiveRemoteWho(nil)
+            return
+        end
         local reportedSixties=sixties
         if filter=="60" and tonumber(total) and tonumber(total)>=shown then
             -- The live query itself is level-filtered, so total is the best
@@ -1397,9 +1431,10 @@ local function RunPendingRemoteWho()
     local query
     if pendingRemoteWhoKind=="zone" then
         if pendingRemoteWhoFilter=="60" then
-            -- Exact level filter returns 60s and keeps the total useful even
-            -- when only part of the player list is visible.
             query='z-"'..pendingRemoteWhoValue..'" 60'
+        elseif pendingRemoteWhoFilter and pendingRemoteWhoFilter:match("^%d+%-%d+$") then
+            -- Blizzard WHO supports numeric level ranges.
+            query='z-"'..pendingRemoteWhoValue..'" '..pendingRemoteWhoFilter
         else
             -- Full zone query preserves the normal noobs + 60s report.
             query='z-"'..pendingRemoteWhoValue..'"'

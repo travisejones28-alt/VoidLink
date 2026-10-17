@@ -395,13 +395,14 @@ local function SendBN(gameAccountID, prefix, payload)
     if not id then return false, "Receiver ID not set" end
 
     -- Prefer the legacy API used by the original working build.
+    -- Classic Era BNSendGameData may return nil after a successful send.
+    -- Do not interpret a nil result as failure and retry/double-send.
     if BNSendGameData then
         local ok, result = pcall(BNSendGameData, id, prefix, payload)
-        if ok and result ~= false then return true, result end
-    end
-    if C_BattleNet and C_BattleNet.SendGameData then
+        return ok, result
+    elseif C_BattleNet and C_BattleNet.SendGameData then
         local ok, result = pcall(C_BattleNet.SendGameData, id, prefix, payload)
-        if ok and result ~= false then return true, result end
+        return ok, result
     end
 
     return false, "Battle.net API unavailable"

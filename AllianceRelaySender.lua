@@ -397,10 +397,11 @@ local function SendBN(gameAccountID, prefix, payload)
     -- Prefer the legacy API used by the original working build.
     if BNSendGameData then
         local ok, result = pcall(BNSendGameData, id, prefix, payload)
-        return ok, result
-    elseif C_BattleNet and C_BattleNet.SendGameData then
+        if ok and result ~= false then return true, result end
+    end
+    if C_BattleNet and C_BattleNet.SendGameData then
         local ok, result = pcall(C_BattleNet.SendGameData, id, prefix, payload)
-        return ok, result
+        if ok and result ~= false then return true, result end
     end
 
     return false, "Battle.net API unavailable"
@@ -1716,7 +1717,7 @@ launcher:SetClampedToScreen(true)
 launcher:Hide()
 
 local cfg = CreateFrame("Frame","AllianceRelayConfig",UIParent,"BackdropTemplate")
-cfg:SetSize(460,560)
+cfg:SetSize(460,620)
 cfg:SetPoint("CENTER")
 cfg:SetFrameStrata("DIALOG")
 cfg:SetMovable(true)
@@ -1768,10 +1769,10 @@ MakeCheck(cfg,"Relay General",20,-82,function() return DB.relayGeneral end,funct
 MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefense end,function(v) DB.relayLocalDefense=v end)
 MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
-MakeCheck(cfg,"Ignore my own messages",220,-242,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
-MakeCheck(cfg,"Relay friend login/logout",20,-414,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
+MakeCheck(cfg,"Ignore my own messages",20,-302,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
+MakeCheck(cfg,"Relay friend login/logout",20,-483,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
 local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-friendStatusHint:SetPoint("TOPLEFT",20,-448)
+friendStatusHint:SetPoint("TOPLEFT",20,-517
 friendStatusHint:SetWidth(410)
 friendStatusHint:SetJustifyH("LEFT")
 friendStatusHint:SetText("Regular WoW friends only. Alerts stay in the receiver's private window.")
@@ -1783,12 +1784,12 @@ MakeCheck(cfg,"Include level",220,-146,function() return DB.includeLevel end,fun
 MakeCheck(cfg,"Include player name",220,-178,function() return DB.includeAuthor end,function(v) DB.includeAuthor=v end)
 
 local idLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
-idLabel:SetPoint("TOPLEFT",20,-250)
+idLabel:SetPoint("TOPLEFT",20,-258)
 idLabel:SetText("Manual receiver ID (backup):")
 
 idBox=CreateFrame("EditBox",nil,cfg,"InputBoxTemplate")
 idBox:SetSize(135,24)
-idBox:SetPoint("TOPLEFT",250,-244)
+idBox:SetPoint("TOPLEFT",250,-271)
 idBox:SetAutoFocus(false)
 idBox:SetNumeric(true)
 idBox:SetScript("OnShow",function(self)
@@ -1856,7 +1857,7 @@ filterBox:SetScript("OnEnterPressed",function(self)
 end)
 
 local hint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-hint:SetPoint("TOPLEFT",20,-286)
+hint:SetPoint("TOPLEFT",20,-341)
 hint:SetWidth(400)
 hint:SetJustifyH("LEFT")
 hint:SetText("WHO scanner: click the zone button repeatedly to advance through the PvP zone list.")
@@ -1864,18 +1865,18 @@ hint:SetText("WHO scanner: click the zone button repeatedly to advance through t
 -- Manual WHO scanner button from AllianceWhoScanner.lua.
 -- This stays separate from the relay's older internal WHO code.
 if AllianceWhoScanner and AllianceWhoScanner.AttachButton then
-    scanBtn = AllianceWhoScanner:AttachButton(cfg, "TOPLEFT", cfg, "TOPLEFT", 20, -330)
+    scanBtn = AllianceWhoScanner:AttachButton(cfg, "TOPLEFT", cfg, "TOPLEFT", 20, -389)
 else
     scanBtn=CreateFrame("Button",nil,cfg,"UIPanelButtonTemplate")
     scanBtn:SetSize(135,28)
-    scanBtn:SetPoint("TOPLEFT",20,-330)
+    scanBtn:SetPoint("TOPLEFT",20,-389)
     scanBtn:SetText("WHO scanner missing")
     scanBtn:SetEnabled(false)
 end
 
 pairButton=CreateFrame("Button",nil,cfg,"UIPanelButtonTemplate")
 pairButton:SetSize(125,28)
-pairButton:SetPoint("TOPLEFT",130,-330)
+pairButton:SetPoint("TOPLEFT",135,-389)
 pairButton:SetText("Find Receivers")
 pairButton:SetScript("OnClick",function() StartPairing(false) end)
 
@@ -1888,15 +1889,15 @@ testBtn:SetScript("OnClick",SendTest)
 
 local dbBtn=CreateFrame("Button",nil,cfg,"UIPanelButtonTemplate")
 dbBtn:SetSize(135,28)
-dbBtn:SetPoint("TOPLEFT",20,-370)
+dbBtn:SetPoint("TOPLEFT",20,-429)
 dbBtn:SetText("WHO Database")
 dbBtn:Show()
 
-local debugCB=MakeCheck(cfg,"Debug",180,-367,function() return DB.debug end,function(v) DB.debug=v end)
+local debugCB=MakeCheck(cfg,"Debug",180,-426,function() return DB.debug end,function(v) DB.debug=v end)
 
 local closeBtn=CreateFrame("Button",nil,cfg,"UIPanelButtonTemplate")
 closeBtn:SetSize(80,26)
-closeBtn:SetPoint("TOPLEFT",340,-370)
+closeBtn:SetPoint("TOPLEFT",340,-429)
 closeBtn:SetText("Close")
 closeBtn:SetScript("OnClick",function() cfg:Hide() end)
 

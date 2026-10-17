@@ -1875,8 +1875,8 @@ else
 end
 
 pairButton=CreateFrame("Button",nil,cfg,"UIPanelButtonTemplate")
-pairButton:SetSize(125,28)
-pairButton:SetPoint("TOPLEFT",135,-389)
+pairButton:SetSize(120,28)
+pairButton:SetPoint("TOPLEFT",170,-389)
 pairButton:SetText("Find Receivers")
 pairButton:SetScript("OnClick",function() StartPairing(false) end)
 

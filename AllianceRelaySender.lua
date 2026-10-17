@@ -1772,7 +1772,7 @@ MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,functio
 MakeCheck(cfg,"Ignore my own messages",20,-302,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
 MakeCheck(cfg,"Relay friend login/logout",20,-483,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
 local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-friendStatusHint:SetPoint("TOPLEFT",20,-517
+friendStatusHint:SetPoint("TOPLEFT",20,-517)
 friendStatusHint:SetWidth(410)
 friendStatusHint:SetJustifyH("LEFT")
 friendStatusHint:SetText("Regular WoW friends only. Alerts stay in the receiver's private window.")

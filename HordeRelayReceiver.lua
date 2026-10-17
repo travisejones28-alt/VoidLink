@@ -624,13 +624,13 @@ end
 local function SendBNToID(id,payload)
     id=tonumber(id)
     if not id or not payload then return false end
+    -- Preserve Classic Era's legacy send semantics (nil can be success).
     if BNSendGameData then
-        local ok,result=pcall(BNSendGameData,id,PREFIX,payload)
-        if ok and result~=false then return true end
-    end
-    if C_BattleNet and C_BattleNet.SendGameData then
-        local ok,result=pcall(C_BattleNet.SendGameData,id,PREFIX,payload)
-        if ok and result~=false then return true end
+        local ok=pcall(BNSendGameData,id,PREFIX,payload)
+        return ok
+    elseif C_BattleNet and C_BattleNet.SendGameData then
+        local ok=pcall(C_BattleNet.SendGameData,id,PREFIX,payload)
+        return ok
     end
     return false
 end

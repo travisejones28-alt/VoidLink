@@ -63,7 +63,7 @@ local defaults = {
     -- filters are applied. This includes General, LocalDefense, Party, Guild,
     -- incoming DMs, and outgoing DMs.
     spyChatLogging=true,
-    spyChatRetentionDays=30,
+    spyChatRetentionDays=0, -- 0 = never delete relayed chat by age
     spyChatMaxPerDay=5000,
 
     -- DMs are private by default. These only control whether a relayed whisper
@@ -218,6 +218,10 @@ local function ApplyDefaults()
     DB=HordeRelayReceiverDB
     for k,v in pairs(defaults) do
         if DB[k]==nil then DB[k]=v end
+    end
+    if not DB.archiveKeepForeverMigrated then
+        if DB.spyChatRetentionDays == 30 or DB.spyChatRetentionDays == nil then DB.spyChatRetentionDays = 0 end
+        DB.archiveKeepForeverMigrated = true
     end
 end
 
@@ -1559,7 +1563,7 @@ local function PruneSpyChatLog(currentDay)
     DB._spyChatLastPruneDay = currentDay
 
     local keepDays = tonumber(DB.spyChatRetentionDays) or 30
-    if keepDays < 1 then keepDays = 1 end
+    if keepDays <= 0 then return end -- permanent archive
 
     local now = (time and time()) or 0
     local cutoff = now - (keepDays * 86400)

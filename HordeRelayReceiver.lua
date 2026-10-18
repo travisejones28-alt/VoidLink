@@ -1266,7 +1266,7 @@ local function HandleRemoteWhoResponse(p)
     end
 
     if subtype=="RH" then
-        whoState={mode="range",filter=p[4] or "",zone=p[3] or "?",
+        whoState={mode=(p[4]=="guild" and "guild" or "range"),filter=p[4] or "",zone=p[3] or "?",
             names={},plainNames={},shown=tonumber(p[5]) or 0,
             total=tonumber(p[6]) or 0}
         if reply then reply.state=whoState else legacyWhoState=whoState end
@@ -1281,6 +1281,7 @@ local function HandleRemoteWhoResponse(p)
             local shortClass=ClassAbbr(class or "")
             whoState.plainNames[#whoState.plainNames+1]=BareName(name)
                 .."(Lv"..tostring(level or "?").." "..tostring(shortClass~="" and shortClass or "?")..")"
+                ..(whoState.mode=="guild" and (" - "..tostring(zone and zone~="" and zone or "Unknown zone")) or "")
         end
         return
     end
@@ -1288,7 +1289,9 @@ local function HandleRemoteWhoResponse(p)
     if subtype=="RT" then
         local zone=AbbrevZone(whoState.zone or "?")
         local filter=whoState.filter or "?"
-        local summary="[WHO] "..zone.." "..filter..": "..tostring(#whoState.plainNames).." shown"
+        local summary=whoState.mode=="guild"
+            and ("[WHO] Guild "..tostring(whoState.zone)..": "..tostring(#whoState.plainNames).." shown")
+            or ("[WHO] "..zone.." "..filter..": "..tostring(#whoState.plainNames).." shown")
         if p[3] and p[3]~="" then summary=summary.." (capped)" end
         PublishWhoResult("|cff66ccff"..summary.."|r",summary,reply)
         local chunk={}

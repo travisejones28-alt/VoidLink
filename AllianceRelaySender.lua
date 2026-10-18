@@ -66,6 +66,7 @@ local defaults = {
     relayFriendStatus = true, -- receiver's optional private-window alert decides visibility
     receiverGameAccountID = nil, -- legacy/primary mirror
     receivers = {},
+    flaggedEnemyFriends = {},
 
     includeTimestamp = true,
     includeZone = true,
@@ -719,7 +720,7 @@ local function UpdateFriendStatus()
     if not previous or not DB.enabled or not DB.relayFriendStatus or ReceiverCount(false) == 0 then return end
     for key, info in pairs(current) do
         local old = previous[key]
-        if old and old.online ~= info.online then
+        if old and old.online ~= info.online and DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[key] then
             friendStatusSequence = friendStatusSequence + 1
             -- Use a dedicated packet rather than an AM chat type. Older
             -- receivers reject FS, so these notices can never be public chat.
@@ -731,6 +732,78 @@ local function UpdateFriendStatus()
             }, "\031")
             QueuePayload(payload)
         end
+    end
+end
+
+-- Explicit opt-in: only tracked enemy friends generate login/logout packets.
+local function SetEnemyFriend(name, flag)
+    name=tostring(name or ""):match("^%s*(.-)%s*$")
+    if name=="" then return end
+    local key=name:lower()
+    DB.flaggedEnemyFriends=DB.flaggedEnemyFriends or {}
+    if flag then DB.flaggedEnemyFriends[key]=true
+    else DB.flaggedEnemyFriends[key]=nil end
+    Print(name..(flag and " flagged as enemy friend." or " removed from enemy tracking."))
+end
+
+local function SelectedFriendName()
+    if not GetSelectedFriend then return nil end
+    local index=GetSelectedFriend()
+    if not index or index<1 then return nil end
+    if C_FriendList and C_FriendList.GetFriendInfoByIndex then
+        local info=C_FriendList.GetFriendInfoByIndex(index)
+        return info and info.name
+    end
+    if GetFriendInfo then return GetFriendInfo(index) end
+end
+
+local friendFlagButton
+local function RefreshFriendFlagButton()
+    if not friendFlagButton then return end
+    local name=SelectedFriendName()
+    if not name then
+        friendFlagButton:SetText("Flag Enemy")
+        friendFlagButton:Disable()
+        return
+    end
+    friendFlagButton:Enable()
+    local flagged=DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[name:lower()]
+    friendFlagButton:SetText(flagged and "Unflag Enemy" or "Flag Enemy")
+end
+
+local function InstallFriendFlagButton()
+    if friendFlagButton or not FriendsFrame then return end
+    friendFlagButton=CreateFrame("Button","VoidLinkFlagEnemyFriend",FriendsFrame,"UIPanelButtonTemplate")
+    friendFlagButton:SetSize(115,23)
+    friendFlagButton:SetPoint("TOPRIGHT",FriendsFrame,"TOPRIGHT",-40,-70)
+    friendFlagButton:SetFrameLevel(FriendsFrame:GetFrameLevel()+10)
+    friendFlagButton:SetScript("OnClick",function()
+        local name=SelectedFriendName()
+        if not name then return end
+        DB.flaggedEnemyFriends=DB.flaggedEnemyFriends or {}
+        SetEnemyFriend(name,not DB.flaggedEnemyFriends[name:lower()])
+        RefreshFriendFlagButton()
+    end)
+    friendFlagButton:SetScript("OnUpdate",function(self,elapsed)
+        self.elapsed=(self.elapsed or 0)+elapsed
+        if self.elapsed>=0.4 then self.elapsed=0;RefreshFriendFlagButton() end
+    end)
+    RefreshFriendFlagButton()
+end
+
+SLASH_VOIDLINKENEMY1="/vlenemy"
+SlashCmdList["VOIDLINKENEMY"]=function(msg)
+    local action,name=tostring(msg or ""):match("^(%S+)%s*(.-)%s*$")
+    action=(action or ""):lower()
+    if action=="list" then
+        local names={}
+        for key in pairs(DB.flaggedEnemyFriends or {}) do names[#names+1]=key end
+        table.sort(names)
+        Print("Flagged enemies: "..(#names>0 and table.concat(names,", ") or "none"))
+    elseif name and name~="" and (action=="add" or action=="remove") then
+        SetEnemyFriend(name,action=="add")
+    else
+        Print("Use /vlenemy add Name, /vlenemy remove Name, or /vlenemy list. Or select a WoW friend and click Flag Enemy.")
     end
 end
 
@@ -1776,7 +1849,7 @@ local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmal
 friendStatusHint:SetPoint("TOPLEFT",20,-517)
 friendStatusHint:SetWidth(410)
 friendStatusHint:SetJustifyH("LEFT")
-friendStatusHint:SetText("Regular WoW friends only. Alerts stay in the receiver's private window.")
+friendStatusHint:SetText("Only flagged enemies. Select a friend and click Flag Enemy, or use /vlenemy add Name.")
 
 MakeCheck(cfg,"Include timestamp",220,-50,function() return DB.includeTimestamp end,function(v) DB.includeTimestamp=v end)
 MakeCheck(cfg,"Include zone",220,-82,function() return DB.includeZone end,function(v) DB.includeZone=v end)
@@ -2141,6 +2214,7 @@ f:SetScript("OnEvent",function(self,event,...)
         end
         if launcher then launcher:Hide() end
         EnsureReceiverDB()
+        InstallFriendFlagButton()
         friendStatusReady = true
         friendSnapshot = nil
         UpdateFriendStatus()
@@ -2174,6 +2248,7 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="FRIENDLIST_UPDATE" then
         UpdateFriendStatus()
+        InstallFriendFlagButton()
         return
     end
 

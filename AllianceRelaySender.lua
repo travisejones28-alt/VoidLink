@@ -746,15 +746,21 @@ local function SetEnemyFriend(name, flag)
     Print(name..(flag and " flagged as enemy friend." or " removed from enemy tracking."))
 end
 
+-- Classic Era FriendsFrame does not reliably expose GetSelectedFriend().
+-- A regular WoW friend can be right-clicked without ever becoming selected.
+local selectedEnemyFriend
 local function SelectedFriendName()
-    if not GetSelectedFriend then return nil end
-    local index=GetSelectedFriend()
-    if not index or index<1 then return nil end
-    if C_FriendList and C_FriendList.GetFriendInfoByIndex then
-        local info=C_FriendList.GetFriendInfoByIndex(index)
-        return info and info.name
+    if selectedEnemyFriend then return selectedEnemyFriend end
+    if type(GetSelectedFriend)=="function" then
+        local index=GetSelectedFriend()
+        if type(index)=="number" and index>0 then
+            if C_FriendList and C_FriendList.GetFriendInfoByIndex then
+                local info=C_FriendList.GetFriendInfoByIndex(index)
+                if info and info.name then return info.name end
+            end
+            if GetFriendInfo then return GetFriendInfo(index) end
+        end
     end
-    if GetFriendInfo then return GetFriendInfo(index) end
 end
 
 local friendFlagButton
@@ -762,8 +768,8 @@ local function RefreshFriendFlagButton()
     if not friendFlagButton then return end
     local name=SelectedFriendName()
     if not name then
-        friendFlagButton:SetText("Flag Enemy")
-        friendFlagButton:Disable()
+        friendFlagButton:SetText("Flag Enemy...")
+        friendFlagButton:Enable()
         return
     end
     friendFlagButton:Enable()
@@ -779,7 +785,24 @@ local function InstallFriendFlagButton()
     friendFlagButton:SetFrameLevel(FriendsFrame:GetFrameLevel()+10)
     friendFlagButton:SetScript("OnClick",function()
         local name=SelectedFriendName()
-        if not name then return end
+        if not name then
+            StaticPopupDialogs["VOIDLINK_ENEMY_NAME"] = StaticPopupDialogs["VOIDLINK_ENEMY_NAME"] or {
+                text="Enter the exact character name from your WoW Friends List:",
+                button1=ACCEPT, button2=CANCEL, hasEditBox=true,
+                OnAccept=function(dialog)
+                    local edit=dialog.editBox or dialog.EditBox
+                    if edit then SetEnemyFriend(edit:GetText(),true) end
+                end,
+                EditBoxOnEnterPressed=function(edit)
+                    local dialog=edit:GetParent()
+                    SetEnemyFriend(edit:GetText(),true)
+                    dialog:Hide()
+                end,
+                timeout=0, whileDead=true, hideOnEscape=true, preferredIndex=3
+            }
+            StaticPopup_Show("VOIDLINK_ENEMY_NAME")
+            return
+        end
         DB.flaggedEnemyFriends=DB.flaggedEnemyFriends or {}
         SetEnemyFriend(name,not DB.flaggedEnemyFriends[name:lower()])
         RefreshFriendFlagButton()

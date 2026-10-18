@@ -770,8 +770,34 @@ local function OpenEnemyPanel()
         input:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
         local add=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
         add:SetSize(75,25);add:SetPoint("LEFT",input,"RIGHT",8,0);add:SetText("Add")
+        local guildInput=CreateFrame("EditBox",nil,f,"InputBoxTemplate")
+        guildInput:SetPoint("TOPLEFT",20,-135)
+        guildInput:SetSize(215,25)
+        guildInput:SetAutoFocus(false)
+        guildInput:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
+        guildInput:SetText(DB.lastEnemyGuildSearch or "")
+        local guildLabel=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+        guildLabel:SetPoint("BOTTOMLEFT",guildInput,"TOPLEFT",0,3)
+        guildLabel:SetText("Guild WHO (e.g., Unlimited)")
+        local guildBtn=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        guildBtn:SetSize(120,25)
+        guildBtn:SetPoint("LEFT",guildInput,"RIGHT",8,0)
+        guildBtn:SetText("WHO Guild")
+        local function SearchGuild()
+            local guild=guildInput:GetText():match("^%s*(.-)%s*$")
+            if guild=="" then return end
+            DB.lastEnemyGuildSearch=guild
+            if AllianceWhoScanner and AllianceWhoScanner.ScanGuild then
+                AllianceWhoScanner:ScanGuild(guild)
+            else
+                Print("WHO scanner unavailable.")
+            end
+            guildInput:ClearFocus()
+        end
+        guildBtn:SetScript("OnClick",SearchGuild)
+        guildInput:SetScript("OnEnterPressed",SearchGuild)
         local scroll=CreateFrame("ScrollFrame",nil,f,"UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT",20,-137);scroll:SetPoint("BOTTOMRIGHT",-39,75)
+        scroll:SetPoint("TOPLEFT",20,-182);scroll:SetPoint("BOTTOMRIGHT",-39,75)
         local content=CreateFrame("Frame",nil,scroll)
         content:SetSize(335,1);scroll:SetScrollChild(content)
         enemyRows=content
@@ -884,6 +910,8 @@ SlashCmdList["VOIDLINKENEMY"]=function(msg)
         OpenEnemyPanel()
     elseif action=="sync" then
         SyncEnemyFriends(true)
+    elseif action=="guild" and name and name~="" then
+        if AllianceWhoScanner and AllianceWhoScanner.ScanGuild then AllianceWhoScanner:ScanGuild(name) end
     elseif action=="list" then
         local names={}
         for key in pairs(DB.flaggedEnemyFriends or {}) do names[#names+1]=key end

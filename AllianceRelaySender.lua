@@ -746,79 +746,145 @@ local function SetEnemyFriend(name, flag)
     Print(name..(flag and " flagged as enemy friend." or " removed from enemy tracking."))
 end
 
--- Classic Era FriendsFrame does not reliably expose GetSelectedFriend().
--- A regular WoW friend can be right-clicked without ever becoming selected.
-local selectedEnemyFriend
-local function SelectedFriendName()
-    if selectedEnemyFriend then return selectedEnemyFriend end
-    if type(GetSelectedFriend)=="function" then
-        local index=GetSelectedFriend()
-        if type(index)=="number" and index>0 then
-            if C_FriendList and C_FriendList.GetFriendInfoByIndex then
-                local info=C_FriendList.GetFriendInfoByIndex(index)
-                if info and info.name then return info.name end
+-- The account-wide Alliance watch list is deliberately separate from Blizzard's UI.
+local enemyPanel, enemyRows, enemyStatus
+local syncPending, syncAt = nil, 0
+local function OpenEnemyPanel()
+    if not enemyPanel then
+        local f=CreateFrame("Frame","VoidLinkEnemyFriendsPanel",UIParent,"BackdropTemplate")
+        enemyPanel=f
+        f:SetSize(400,490); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG")
+        f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart",function(self) self:StartMoving() end)
+        f:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end)
+        f:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",
+            edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",edgeSize=14,
+            insets={left=4,right=4,top=4,bottom=4}})
+        local title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
+        title:SetPoint("TOP",0,-16);title:SetText("VoidLink Enemy Friends")
+        local help=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+        help:SetPoint("TOPLEFT",18,-45);help:SetWidth(360);help:SetJustifyH("LEFT")
+        help:SetText("Shared across Alliance spies on this WoW account. Only flagged friends trigger alerts.")
+        local input=CreateFrame("EditBox",nil,f,"InputBoxTemplate")
+        input:SetPoint("TOPLEFT",20,-94);input:SetSize(215,25);input:SetAutoFocus(false)
+        input:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
+        local add=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        add:SetSize(75,25);add:SetPoint("LEFT",input,"RIGHT",8,0);add:SetText("Add")
+        local scroll=CreateFrame("ScrollFrame",nil,f,"UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT",20,-137);scroll:SetPoint("BOTTOMRIGHT",-39,75)
+        local content=CreateFrame("Frame",nil,scroll)
+        content:SetSize(335,1);scroll:SetScrollChild(content)
+        enemyRows=content
+        enemyStatus=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+        enemyStatus:SetPoint("BOTTOMLEFT",20,49);enemyStatus:SetWidth(350)
+        enemyStatus:SetJustifyH("LEFT")
+        local close=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        close:SetPoint("BOTTOMRIGHT",-18,14);close:SetSize(85,25);close:SetText("Close")
+        close:SetScript("OnClick",function() f:Hide() end)
+        local sync=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        sync:SetPoint("BOTTOMLEFT",18,14);sync:SetSize(130,25);sync:SetText("Sync Friends")
+        sync:SetScript("OnClick",function()
+            if VoidLink_SyncEnemyFriends then VoidLink_SyncEnemyFriends(true) end
+        end)
+        local function Refresh()
+            local names={}
+            for name,enabled in pairs(DB.flaggedEnemyFriends or {}) do
+                if enabled then names[#names+1]=name end
             end
-            if GetFriendInfo then return GetFriendInfo(index) end
+            table.sort(names)
+            local roster=ReadStandardFriends() or {}
+            for _,child in ipairs({enemyRows:GetChildren()}) do child:Hide() end
+            local count=math.min(#names,80)
+            enemyRows:SetHeight(math.max(1,count*30))
+            for i=1,count do
+                local name=names[i]
+                local row=CreateFrame("Button",nil,enemyRows,"UIPanelButtonTemplate")
+                row:SetSize(310,26);row:SetPoint("TOPLEFT",0,-(i-1)*30)
+                local present=roster[name]
+                row:SetText(name.." - "..(present and (present.online and "Online" or "Offline") or "Not on this spy").."  [Remove]")
+                row:SetScript("OnClick",function()
+                    SetEnemyFriend(name,false)
+                    Refresh()
+                end)
+            end
+            enemyStatus:SetText(#names.." flagged | "..tostring(#names>count and "Showing first 80 | " or "").."Friends auto-sync on login.")
         end
+        f.RefreshList=Refresh
+        add:SetScript("OnClick",function()
+            local name=input:GetText()
+            if name and name:match("%S") then
+                SetEnemyFriend(name,true);input:SetText("");input:ClearFocus()
+                Refresh()
+                if VoidLink_SyncEnemyFriends then VoidLink_SyncEnemyFriends(false) end
+            end
+        end)
+        input:SetScript("OnEnterPressed",function() add:Click() end)
     end
+    enemyPanel:Show();enemyPanel:RefreshList()
 end
 
-local friendFlagButton
-local function RefreshFriendFlagButton()
-    if not friendFlagButton then return end
-    local name=SelectedFriendName()
-    if not name then
-        friendFlagButton:SetText("Flag Enemy...")
-        friendFlagButton:Enable()
+local function SyncEnemyFriends(verbose)
+    if UnitFactionGroup("player")~="Alliance" then return end
+    if not (C_FriendList and C_FriendList.AddFriend) and not AddFriend then
+        if verbose then Print("WoW AddFriend API unavailable.") end
         return
     end
-    friendFlagButton:Enable()
-    local flagged=DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[name:lower()]
-    friendFlagButton:SetText(flagged and "Unflag Enemy" or "Flag Enemy")
+    local roster=ReadStandardFriends()
+    if not roster then
+        if verbose then Print("Friends roster not ready; retry after opening Friends List.") end
+        return
+    end
+    local names={}
+    for name,flag in pairs(DB.flaggedEnemyFriends or {}) do
+        if flag and not roster[name] then names[#names+1]=name end
+    end
+    table.sort(names)
+    local count=0
+    for _ in pairs(roster) do count=count+1 end
+    local limit=50
+    local available=math.max(0,limit-count)
+    if #names>available and verbose then Print("Friends List capacity: "..count.."/"..limit.."; "..(#names-available).." enemies could not be added.") end
+    if #names==0 then
+        if verbose then Print("All flagged enemies already in this spy's Friends List.") end
+        return
+    end
+    if available==0 then return end
+    syncPending={names=names,index=1,remaining=available}
+    syncAt=0
+    if verbose then Print("Syncing up to "..math.min(available,#names).." flagged enemies to this spy.") end
 end
+_G.VoidLink_SyncEnemyFriends=SyncEnemyFriends
 
-local function InstallFriendFlagButton()
-    if friendFlagButton or not FriendsFrame then return end
-    friendFlagButton=CreateFrame("Button","VoidLinkFlagEnemyFriend",FriendsFrame,"UIPanelButtonTemplate")
-    friendFlagButton:SetSize(115,23)
-    friendFlagButton:SetPoint("TOPRIGHT",FriendsFrame,"TOPRIGHT",-40,-70)
-    friendFlagButton:SetFrameLevel(FriendsFrame:GetFrameLevel()+10)
-    friendFlagButton:SetScript("OnClick",function()
-        local name=SelectedFriendName()
-        if not name then
-            StaticPopupDialogs["VOIDLINK_ENEMY_NAME"] = StaticPopupDialogs["VOIDLINK_ENEMY_NAME"] or {
-                text="Enter the exact character name from your WoW Friends List:",
-                button1=ACCEPT, button2=CANCEL, hasEditBox=true,
-                OnAccept=function(dialog)
-                    local edit=dialog.editBox or dialog.EditBox
-                    if edit then SetEnemyFriend(edit:GetText(),true) end
-                end,
-                EditBoxOnEnterPressed=function(edit)
-                    local dialog=edit:GetParent()
-                    SetEnemyFriend(edit:GetText(),true)
-                    dialog:Hide()
-                end,
-                timeout=0, whileDead=true, hideOnEscape=true, preferredIndex=3
-            }
-            StaticPopup_Show("VOIDLINK_ENEMY_NAME")
-            return
-        end
-        DB.flaggedEnemyFriends=DB.flaggedEnemyFriends or {}
-        SetEnemyFriend(name,not DB.flaggedEnemyFriends[name:lower()])
-        RefreshFriendFlagButton()
-    end)
-    friendFlagButton:SetScript("OnUpdate",function(self,elapsed)
-        self.elapsed=(self.elapsed or 0)+elapsed
-        if self.elapsed>=0.4 then self.elapsed=0;RefreshFriendFlagButton() end
-    end)
-    RefreshFriendFlagButton()
-end
+local syncTicker=CreateFrame("Frame")
+syncTicker:SetScript("OnUpdate",function(_,elapsed)
+    if not syncPending then return end
+    syncAt=syncAt+elapsed
+    if syncAt<1.5 then return end
+    syncAt=0
+    local q=syncPending
+    if q.index>#q.names or q.remaining<=0 then syncPending=nil;return end
+    local name=q.names[q.index]
+    q.index=q.index+1
+    local roster=ReadStandardFriends()
+    if not roster then syncPending=nil;return end
+    if not roster[name] then
+        local send=(C_FriendList and C_FriendList.AddFriend) or AddFriend
+        local ok=pcall(send,name)
+        if ok then q.remaining=q.remaining-1 end
+    end
+end)
+
+_G.VoidLink_OpenEnemyFriends=OpenEnemyPanel
 
 SLASH_VOIDLINKENEMY1="/vlenemy"
 SlashCmdList["VOIDLINKENEMY"]=function(msg)
     local action,name=tostring(msg or ""):match("^(%S+)%s*(.-)%s*$")
     action=(action or ""):lower()
-    if action=="list" then
+    if action=="" then
+        OpenEnemyPanel()
+    elseif action=="sync" then
+        SyncEnemyFriends(true)
+    elseif action=="list" then
         local names={}
         for key in pairs(DB.flaggedEnemyFriends or {}) do names[#names+1]=key end
         table.sort(names)
@@ -826,7 +892,7 @@ SlashCmdList["VOIDLINKENEMY"]=function(msg)
     elseif name and name~="" and (action=="add" or action=="remove") then
         SetEnemyFriend(name,action=="add")
     else
-        Print("Use /vlenemy add Name, /vlenemy remove Name, or /vlenemy list. Or select a WoW friend and click Flag Enemy.")
+        Print("Use /vlenemy for the list, or /vlenemy add Name, remove Name, list, sync.")
     end
 end
 
@@ -1867,12 +1933,12 @@ MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefens
 MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
 MakeCheck(cfg,"Ignore my own messages",20,-302,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
-MakeCheck(cfg,"Relay friend login/logout",20,-483,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
+MakeCheck(cfg,"Relay flagged enemy alerts",20,-483,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
 local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
 friendStatusHint:SetPoint("TOPLEFT",20,-517)
 friendStatusHint:SetWidth(410)
 friendStatusHint:SetJustifyH("LEFT")
-friendStatusHint:SetText("Only flagged enemies. Select a friend and click Flag Enemy, or use /vlenemy add Name.")
+friendStatusHint:SetText("Only flagged enemies are relayed. Manage the shared list with /vlenemy.")
 
 MakeCheck(cfg,"Include timestamp",220,-50,function() return DB.includeTimestamp end,function(v) DB.includeTimestamp=v end)
 MakeCheck(cfg,"Include zone",220,-82,function() return DB.includeZone end,function(v) DB.includeZone=v end)
@@ -2237,7 +2303,7 @@ f:SetScript("OnEvent",function(self,event,...)
         end
         if launcher then launcher:Hide() end
         EnsureReceiverDB()
-        InstallFriendFlagButton()
+        SyncEnemyFriends(false)
         friendStatusReady = true
         friendSnapshot = nil
         UpdateFriendStatus()

@@ -325,6 +325,9 @@ local function ResolveRemoteWhoTarget(query)
     local q=raw:lower()
     if q=="" then return nil,nil end
 
+    local guild=raw:match("^[Gg][Uu][Ii][Ll][Dd]%s+(.+)$")
+    if guild and guild~="" then return "guild",guild end
+
     local exact=REMOTE_ZONE_ALIASES[q]
     if exact then return "zone",exact end
 
@@ -1548,12 +1551,23 @@ local function SendLiveRemoteWhoResults()
                         matches[#matches+1]={name=name,level=lvl,class=class or "",zone=zone or value,sub60=true}
                     end
                 end
+            elseif kind=="guild" then
+                matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or ""}
             elseif StripRealm(name):lower()==wantName then
                 matches[#matches+1]={name=name,level=level,class=class or "",zone=zone or ""}
             end
         end
     end
 
+    if kind=="guild" then
+        SendRemoteWhoPacket(requesterID,{"WR","RH",Clean(value),"guild",tostring(shown),tostring(total or shown)},replyContext)
+        for _,info in ipairs(matches) do
+            SendRemoteWhoPacket(requesterID,{"WR","RP",Clean(info.name),Clean(info.level),Clean(info.class),Clean(info.zone)},replyContext)
+        end
+        SendRemoteWhoPacket(requesterID,{"WR","RT",(tonumber(total) and total>shown) and "WHO results capped." or ""},replyContext)
+        FinishActiveRemoteWho(nil)
+        return
+    end
     if kind=="zone" then
         local rangeQuery=filter and filter:match("^%d+%-%d+$")
         if rangeQuery then
@@ -1636,6 +1650,8 @@ local function RunPendingRemoteWho()
             -- Full zone query preserves the normal noobs + 60s report.
             query='z-"'..pendingRemoteWhoValue..'"'
         end
+    elseif pendingRemoteWhoKind=="guild" then
+        query='g-"'..pendingRemoteWhoValue..'"'
     else
         query='n-"'..pendingRemoteWhoValue..'"'
     end

@@ -56,8 +56,6 @@ local defaults = {
     relayGuild=true,
     relayIncomingDM=true,
     relayOutgoingDM=true,
-    friendStatusAlerts=false, -- only explicitly flagged enemy friends are sent by sender
-    friendStatusToChat=false, -- optional local chat output
 
     -- Persistent spy-chat archive. Every Alliance spy relay packet is logged
     -- as soon as it reaches this receiver, before receiver display/output
@@ -510,8 +508,6 @@ MakeCheck(cfg,"Alliance guild",20,-134,function() return DB.relayGuild end,funct
 MakeCheck(cfg,"Party source",140,-134,function() return DB.relayPartySource end,function(v) DB.relayPartySource=v end)
 MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
 MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
-MakeCheck(cfg,"Friend login/logout",20,-230,function() return DB.friendStatusAlerts end,function(v) DB.friendStatusAlerts=v end)
-MakeCheck(cfg,"Friend alerts to chat",270,-262,function() return DB.friendStatusToChat end,function(v) DB.friendStatusToChat=v end)
 
 -- Output destinations. These decide WHERE enabled relay types are shown/sent.
 local destinationsLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -1698,33 +1694,6 @@ local function HandlePayload(payload,senderID)
         return
     end
 
-    if p[1]=="FS" then
-        -- A dedicated private-window path: do not use the normal chat formatter,
-        -- archive/export, or Party/Raid/Guild forwarding for these alerts.
-        if not DB.friendStatusAlerts then return end
-        local presence, name = p[2], p[3]
-        if (presence ~= "ONLINE" and presence ~= "OFFLINE")
-           or not name or name == "" or name == "?" then return end
-        local timestamp = p[4] or date("%H:%M:%S")
-        local online = presence == "ONLINE"
-        local color = online and "|cff66ff66" or "|cffff5555"
-        local line = "|cff888888["..timestamp.."]|r |cffffcc00[Spy friend]|r "
-            ..color..CleanOutgoing(name)..(online and " logged IN." or " logged OUT.").."|r"
-        -- Retain messages in the scrollback when the private window is closed.
-        -- Receiving an alert does not open the window automatically.
-        scroll:AddMessage(line)
-        AddHistory(line)
-        if DB.friendStatusToChat and DEFAULT_CHAT_FRAME then
-            DEFAULT_CHAT_FRAME:AddMessage(line)
-        end
-        status:SetText(timestamp.." friend "..presence:lower())
-        -- Audible cue for both friend login and logout alerts.
-        if PlaySound and SOUNDKIT and SOUNDKIT.TELL_MESSAGE then
-            pcall(PlaySound,SOUNDKIT.TELL_MESSAGE,"Master")
-        end
-        return
-    end
-
     -- Only accept relay chat packets created by the faction-locked Alliance
     -- sender. Legacy "M" packets are intentionally rejected because an old
     -- sender loaded on a Horde client could forward Horde General/LD chat.
@@ -2007,7 +1976,6 @@ SlashCmdList["HORDERELAYDIAG"]=function(msg)
         .." guild="..tostring(DB.guildRelay))
     Print("inGuild="..tostring(IsInGuild and IsInGuild() or false)
         .." guildSource="..tostring(DB.relayGuild).." onlyCurrentZone="..tostring(DB.onlyCurrentZone))
-    Print("private friend status alerts="..tostring(DB.friendStatusAlerts))
     local chatAPI = C_ChatInfo and type(C_ChatInfo.SendChatMessage)=="function"
         and "C_ChatInfo.SendChatMessage" or (type(SendChatMessage)=="function" and "SendChatMessage" or "unavailable")
     Print("chat API="..chatAPI)

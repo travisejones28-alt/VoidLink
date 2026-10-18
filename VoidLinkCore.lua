@@ -217,14 +217,20 @@ receiverSettings:SetScript("OnClick",function()
 end)
 
 local chatBtn = CreateFrame("Button",nil,panel,"UIPanelButtonTemplate")
-chatBtn:SetSize(230,28)
-chatBtn:SetPoint("TOP",0,-188)
+chatBtn:SetSize(160,28)
+chatBtn:SetPoint("TOPLEFT",20,-188)
 chatBtn:SetText("Show / Hide Chat Window")
 chatBtn:SetScript("OnClick",function()
     if _G.VoidLink_ToggleReceiverWindow then
         _G.VoidLink_ToggleReceiverWindow()
     end
 end)
+
+local archiveBtn=CreateFrame("Button",nil,panel,"UIPanelButtonTemplate")
+archiveBtn:SetSize(145,28)
+archiveBtn:SetPoint("TOPRIGHT",-20,-188)
+archiveBtn:SetText("Chat Archive")
+archiveBtn:SetScript("OnClick",function() if VoidLink_OpenArchive then VoidLink_OpenArchive() end end)
 
 local privateToggle=CreateFrame("CheckButton",nil,panel,"UICheckButtonTemplate")
 privateToggle:SetPoint("TOPLEFT",22,-222)
@@ -475,6 +481,127 @@ local function ShowExport(day)
     exportWindow.edit:HighlightText()
 end
 
+
+-- Search the existing saved chat logs. Never create a duplicate archive.
+local archiveFrame
+local function ShowArchive()
+    if not archiveFrame then
+        local f=CreateFrame("Frame","VoidLinkArchiveWindow",UIParent,"BackdropTemplate")
+        archiveFrame=f
+        f:SetSize(750,540)
+        f:SetPoint("CENTER")
+        f:SetFrameStrata("DIALOG")
+        f:SetMovable(true)
+        f:EnableMouse(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetClampedToScreen(true)
+        f:SetScript("OnDragStart",function(self) self:StartMoving() end)
+        f:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end)
+        f:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",edgeSize=14,
+            insets={left=4,right=4,top=4,bottom=4}})
+        local heading=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
+        heading:SetPoint("TOP",0,-16)
+        heading:SetText("VoidLink Chat Archive")
+        local hint=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+        hint:SetPoint("TOPLEFT",20,-42)
+        hint:SetText("Search player or message. Date: YYYY-MM-DD (optional). Results can be copied with Ctrl+A, Ctrl+C.")
+        local function MakeInput(x,w,placeholder)
+            local edit=CreateFrame("EditBox",nil,f,"InputBoxTemplate")
+            edit:SetSize(w,25)
+            edit:SetPoint("TOPLEFT",x,-72)
+            edit:SetAutoFocus(false)
+            edit:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
+            edit:SetText("")
+            local label=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+            label:SetPoint("BOTTOMLEFT",edit,"TOPLEFT",0,3)
+            label:SetText(placeholder)
+            return edit
+        end
+        local search=MakeInput(20,400,"Player / keyword")
+        local day=MakeInput(435,130,"Date (optional)")
+        local channel=MakeInput(575,85,"Channel")
+        local results=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+        results:SetPoint("TOPLEFT",20,-117)
+        results:SetText("Enter search criteria or leave blank for recent messages.")
+        local scroll=CreateFrame("ScrollFrame",nil,f,"UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT",20,-139)
+        scroll:SetPoint("BOTTOMRIGHT",-42,54)
+        local edit=CreateFrame("EditBox",nil,scroll)
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject(ChatFontNormal)
+        edit:SetWidth(665)
+        edit:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
+        scroll:SetScrollChild(edit)
+        local function Refresh()
+            local q=search:GetText():lower()
+            local dateFilter=day:GetText()
+            local channelFilter=channel:GetText():lower()
+            local rows={}
+            local function Collect(log,source)
+                if type(log)~="table" then return end
+                for dateKey,bucket in pairs(log) do
+                    if (dateFilter=="" or dateKey==dateFilter) and type(bucket)=="table" then
+                        for _,entry in ipairs(bucket.entries or {}) do
+                            local name=tostring(entry.author or "")
+                            local message=tostring(entry.text or "")
+                            local kind=tostring(entry.kind or "")
+                            if (q=="" or name:lower():find(q,1,true) or message:lower():find(q,1,true))
+                                and (channelFilter=="" or kind:lower():find(channelFilter,1,true)) then
+                                rows[#rows+1]={entry=entry,source=source,day=dateKey}
+                            end
+                        end
+                    end
+                end
+            end
+            Collect(DB.chatLog,"local")
+            Collect(HordeRelayReceiverDB and HordeRelayReceiverDB.spyChatLog,"relay")
+            table.sort(rows,function(a,b)
+                local at,bt=tonumber(a.entry.t) or 0,tonumber(b.entry.t) or 0
+                if at~=bt then return at>bt end
+                return tostring(a.day)>tostring(b.day)
+            end)
+            local lines={}
+            local count=math.min(#rows,300)
+            for i=1,count do
+                local row=rows[i];local e=row.entry
+                local stamp=tonumber(e.t) and date("%Y-%m-%d %H:%M:%S",e.t)
+                    or (row.day.." "..tostring(e.time or ""))
+                lines[#lines+1]=string.format("[%s] [%s] [%s] %s: %s",
+                    stamp,row.source,tostring(e.kind or ""),tostring(e.author or ""),tostring(e.text or ""))
+            end
+            if count==0 then lines[1]="No matching saved messages." end
+            edit:SetText(table.concat(lines,"\n"))
+            edit:SetCursorPosition(0)
+            results:SetText("Matches: "..#rows.." | Showing newest "..count.." | Select text, Ctrl+C to copy")
+            scroll:SetVerticalScroll(0)
+        end
+        local find=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        find:SetSize(80,25)
+        find:SetPoint("TOPLEFT",666,-72)
+        find:SetText("Search")
+        find:SetScript("OnClick",Refresh)
+        for _,input in ipairs({search,day,channel}) do
+            input:SetScript("OnEnterPressed",function(self) self:ClearFocus(); Refresh() end)
+        end
+        local copy=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        copy:SetSize(130,26)
+        copy:SetPoint("BOTTOMLEFT",20,14)
+        copy:SetText("Select All / Copy")
+        copy:SetScript("OnClick",function() edit:SetFocus();edit:HighlightText() end)
+        local close=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
+        close:SetSize(85,26)
+        close:SetPoint("BOTTOMRIGHT",-20,14)
+        close:SetText("Close")
+        close:SetScript("OnClick",function() f:Hide() end)
+        f.RefreshArchive=Refresh
+    end
+    archiveFrame:Show()
+    archiveFrame:RefreshArchive()
+end
+
+_G.VoidLink_OpenArchive=ShowArchive
+
 -- Record directly from chat events, independently of role, relay connection,
 -- relay filters and faction. Own messages must be retained for conversations.
 local logger = CreateFrame("Frame")
@@ -515,6 +642,8 @@ SlashCmdList["VOIDLINK"]=function(message)
             return
         end
         ShowExport(arg ~= "" and arg or nil)
+    elseif command == "archive" or command == "search" then
+        ShowArchive()
     elseif command == "log" then
         if arg == "on" or arg == "off" then
             DB.chatLogging = arg == "on"

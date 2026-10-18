@@ -52,9 +52,6 @@ local pendingWho = {}
 local RemovePendingWho
 local lastWhoScan = 0
 local scanBtn
-local friendSnapshot = nil
-local friendStatusReady = false
-local friendStatusSequence = 0
 
 local defaults = {
     enabled = true,
@@ -63,10 +60,8 @@ local defaults = {
     relayParty = true,
     relayGuild = true,
     relayWhispers = true,
-    relayFriendStatus = true, -- receiver's optional private-window alert decides visibility
     receiverGameAccountID = nil, -- legacy/primary mirror
     receivers = {},
-    flaggedEnemyFriends = {},
 
     includeTimestamp = true,
     includeZone = true,
@@ -680,252 +675,6 @@ local function QueuePayload(payload)
     end
     queue[#queue+1] = payload
     PumpQueue()
-end
-
-local function ReadStandardFriends()
-    local getCount = C_FriendList and C_FriendList.GetNumFriends or GetNumFriends
-    local getInfo = C_FriendList and C_FriendList.GetFriendInfoByIndex
-    if type(getCount) ~= "function" or (type(getInfo) ~= "function" and type(GetFriendInfo) ~= "function") then
-        return nil
-    end
-    local ok, count = pcall(getCount)
-    if not ok or type(count) ~= "number" or count < 0 then return nil end
-
-    local snapshot = {}
-    for i = 1, count do
-        local info
-        if type(getInfo) == "function" then
-            ok, info = pcall(getInfo, i)
-            if not ok or type(info) ~= "table" or type(info.connected) ~= "boolean" then return nil end
-        else
-            local name, level, class, area, connected
-            ok, name, level, class, area, connected = pcall(GetFriendInfo, i)
-            if not ok then return nil end
-            info = {name=name, connected=connected and true or false}
-        end
-        -- A partial roster is not a status change. Keep the last complete
-        -- snapshot until Blizzard supplies all entries again.
-        if type(info.name) ~= "string" or info.name == "" then return nil end
-        snapshot[info.name:lower()] = {name=info.name, online=info.connected}
-    end
-    return snapshot
-end
-
-local function UpdateFriendStatus()
-    if not friendStatusReady or UnitFactionGroup("player") ~= "Alliance" then return end
-    local current = ReadStandardFriends()
-    if not current then return end
-    local previous = friendSnapshot
-    friendSnapshot = current
-
-    -- Always keep the baseline current, including while disabled/disconnected.
-    -- First load, newly added friends, and removed friends produce no alert.
-    if not previous or not DB.enabled or not DB.relayFriendStatus or ReceiverCount(false) == 0 then return end
-    for key, info in pairs(current) do
-        local old = previous[key]
-        if old and old.online ~= info.online and DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[key] then
-            friendStatusSequence = friendStatusSequence + 1
-            -- Use a dedicated packet rather than an AM chat type. Older
-            -- receivers reject FS, so these notices can never be public chat.
-            local payload = table.concat({
-                "FS", info.online and "ONLINE" or "OFFLINE",
-                Clean(info.name):gsub("\031", " "), date("%H:%M:%S"),
-                Clean(UnitName("player") or "?"),
-                tostring(time())..":"..tostring(friendStatusSequence),
-            }, "\031")
-            QueuePayload(payload)
-        end
-    end
-end
-
--- Explicit opt-in: only tracked enemy friends generate login/logout packets.
-local function SetEnemyFriend(name, flag)
-    name=tostring(name or ""):match("^%s*(.-)%s*$")
-    if name=="" then return end
-    local key=name:lower()
-    DB.flaggedEnemyFriends=DB.flaggedEnemyFriends or {}
-    if flag then DB.flaggedEnemyFriends[key]=true
-    else DB.flaggedEnemyFriends[key]=nil end
-    Print(name..(flag and " flagged as enemy friend." or " removed from enemy tracking."))
-end
-
--- The account-wide Alliance watch list is deliberately separate from Blizzard's UI.
-local enemyPanel, enemyRows, enemyStatus
-local syncPending, syncAt = nil, 0
-local function OpenEnemyPanel()
-    if not enemyPanel then
-        local f=CreateFrame("Frame","VoidLinkEnemyFriendsPanel",UIParent,"BackdropTemplate")
-        enemyPanel=f
-        f:SetSize(400,490); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG")
-        f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-        f:SetScript("OnDragStart",function(self) self:StartMoving() end)
-        f:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end)
-        f:SetBackdrop({bgFile="Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",edgeSize=14,
-            insets={left=4,right=4,top=4,bottom=4}})
-        local title=f:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
-        title:SetPoint("TOP",0,-16);title:SetText("VoidLink Enemy Friends")
-        local help=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-        help:SetPoint("TOPLEFT",18,-45);help:SetWidth(360);help:SetJustifyH("LEFT")
-        help:SetText("Shared across Alliance spies on this WoW account. Only flagged friends trigger alerts.")
-        local input=CreateFrame("EditBox",nil,f,"InputBoxTemplate")
-        input:SetPoint("TOPLEFT",20,-94);input:SetSize(215,25);input:SetAutoFocus(false)
-        input:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
-        local add=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
-        add:SetSize(75,25);add:SetPoint("LEFT",input,"RIGHT",8,0);add:SetText("Add")
-        local guildInput=CreateFrame("EditBox",nil,f,"InputBoxTemplate")
-        guildInput:SetPoint("TOPLEFT",20,-135)
-        guildInput:SetSize(215,25)
-        guildInput:SetAutoFocus(false)
-        guildInput:SetScript("OnEscapePressed",function(self) self:ClearFocus() end)
-        guildInput:SetText(DB.lastEnemyGuildSearch or "")
-        local guildLabel=f:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
-        guildLabel:SetPoint("BOTTOMLEFT",guildInput,"TOPLEFT",0,3)
-        guildLabel:SetText("Guild WHO (e.g., Unlimited)")
-        local guildBtn=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
-        guildBtn:SetSize(120,25)
-        guildBtn:SetPoint("LEFT",guildInput,"RIGHT",8,0)
-        guildBtn:SetText("WHO Guild")
-        local function SearchGuild()
-            local guild=guildInput:GetText():match("^%s*(.-)%s*$")
-            if guild=="" then return end
-            DB.lastEnemyGuildSearch=guild
-            if AllianceWhoScanner and AllianceWhoScanner.ScanGuild then
-                AllianceWhoScanner:ScanGuild(guild)
-            else
-                Print("WHO scanner unavailable.")
-            end
-            guildInput:ClearFocus()
-        end
-        guildBtn:SetScript("OnClick",SearchGuild)
-        guildInput:SetScript("OnEnterPressed",SearchGuild)
-        local scroll=CreateFrame("ScrollFrame",nil,f,"UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT",20,-182);scroll:SetPoint("BOTTOMRIGHT",-39,75)
-        local content=CreateFrame("Frame",nil,scroll)
-        content:SetSize(335,1);scroll:SetScrollChild(content)
-        enemyRows=content
-        enemyStatus=f:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-        enemyStatus:SetPoint("BOTTOMLEFT",20,49);enemyStatus:SetWidth(350)
-        enemyStatus:SetJustifyH("LEFT")
-        local close=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
-        close:SetPoint("BOTTOMRIGHT",-18,14);close:SetSize(85,25);close:SetText("Close")
-        close:SetScript("OnClick",function() f:Hide() end)
-        local sync=CreateFrame("Button",nil,f,"UIPanelButtonTemplate")
-        sync:SetPoint("BOTTOMLEFT",18,14);sync:SetSize(130,25);sync:SetText("Sync Friends")
-        sync:SetScript("OnClick",function()
-            if VoidLink_SyncEnemyFriends then VoidLink_SyncEnemyFriends(true) end
-        end)
-        local function Refresh()
-            local names={}
-            for name,enabled in pairs(DB.flaggedEnemyFriends or {}) do
-                if enabled then names[#names+1]=name end
-            end
-            table.sort(names)
-            local roster=ReadStandardFriends() or {}
-            for _,child in ipairs({enemyRows:GetChildren()}) do child:Hide() end
-            local count=math.min(#names,80)
-            enemyRows:SetHeight(math.max(1,count*30))
-            for i=1,count do
-                local name=names[i]
-                local row=CreateFrame("Button",nil,enemyRows,"UIPanelButtonTemplate")
-                row:SetSize(310,26);row:SetPoint("TOPLEFT",0,-(i-1)*30)
-                local present=roster[name]
-                row:SetText(name.." - "..(present and (present.online and "Online" or "Offline") or "Not on this spy").."  [Remove]")
-                row:SetScript("OnClick",function()
-                    SetEnemyFriend(name,false)
-                    Refresh()
-                end)
-            end
-            enemyStatus:SetText(#names.." flagged | "..tostring(#names>count and "Showing first 80 | " or "").."Friends auto-sync on login.")
-        end
-        f.RefreshList=Refresh
-        add:SetScript("OnClick",function()
-            local name=input:GetText()
-            if name and name:match("%S") then
-                SetEnemyFriend(name,true);input:SetText("");input:ClearFocus()
-                Refresh()
-                if VoidLink_SyncEnemyFriends then VoidLink_SyncEnemyFriends(false) end
-            end
-        end)
-        input:SetScript("OnEnterPressed",function() add:Click() end)
-    end
-    enemyPanel:Show();enemyPanel:RefreshList()
-end
-
-local function SyncEnemyFriends(verbose)
-    if UnitFactionGroup("player")~="Alliance" then return end
-    if not (C_FriendList and C_FriendList.AddFriend) and not AddFriend then
-        if verbose then Print("WoW AddFriend API unavailable.") end
-        return
-    end
-    local roster=ReadStandardFriends()
-    if not roster then
-        if verbose then Print("Friends roster not ready; retry after opening Friends List.") end
-        return
-    end
-    local names={}
-    for name,flag in pairs(DB.flaggedEnemyFriends or {}) do
-        if flag and not roster[name] then names[#names+1]=name end
-    end
-    table.sort(names)
-    local count=0
-    for _ in pairs(roster) do count=count+1 end
-    local limit=50
-    local available=math.max(0,limit-count)
-    if #names>available and verbose then Print("Friends List capacity: "..count.."/"..limit.."; "..(#names-available).." enemies could not be added.") end
-    if #names==0 then
-        if verbose then Print("All flagged enemies already in this spy's Friends List.") end
-        return
-    end
-    if available==0 then return end
-    syncPending={names=names,index=1,remaining=available}
-    syncAt=0
-    if verbose then Print("Syncing up to "..math.min(available,#names).." flagged enemies to this spy.") end
-end
-_G.VoidLink_SyncEnemyFriends=SyncEnemyFriends
-
-local syncTicker=CreateFrame("Frame")
-syncTicker:SetScript("OnUpdate",function(_,elapsed)
-    if not syncPending then return end
-    syncAt=syncAt+elapsed
-    if syncAt<1.5 then return end
-    syncAt=0
-    local q=syncPending
-    if q.index>#q.names or q.remaining<=0 then syncPending=nil;return end
-    local name=q.names[q.index]
-    q.index=q.index+1
-    local roster=ReadStandardFriends()
-    if not roster then syncPending=nil;return end
-    if not roster[name] and DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[name] then
-        local send=(C_FriendList and C_FriendList.AddFriend) or AddFriend
-        local ok=pcall(send,name)
-        if ok then q.remaining=q.remaining-1 end
-    end
-end)
-
-_G.VoidLink_OpenEnemyFriends=OpenEnemyPanel
-
-SLASH_VOIDLINKENEMY1="/vlenemy"
-SlashCmdList["VOIDLINKENEMY"]=function(msg)
-    local action,name=tostring(msg or ""):match("^(%S+)%s*(.-)%s*$")
-    action=(action or ""):lower()
-    if action=="" then
-        OpenEnemyPanel()
-    elseif action=="sync" then
-        SyncEnemyFriends(true)
-    elseif action=="guild" and name and name~="" then
-        if AllianceWhoScanner and AllianceWhoScanner.ScanGuild then AllianceWhoScanner:ScanGuild(name) end
-    elseif action=="list" then
-        local names={}
-        for key in pairs(DB.flaggedEnemyFriends or {}) do names[#names+1]=key end
-        table.sort(names)
-        Print("Flagged enemies: "..(#names>0 and table.concat(names,", ") or "none"))
-    elseif name and name~="" and (action=="add" or action=="remove") then
-        SetEnemyFriend(name,action=="add")
-        if action=="add" then SyncEnemyFriends(false) end
-    else
-        Print("Use /vlenemy for the list, or /vlenemy add Name, remove Name, list, sync.")
-    end
 end
 
 local function CacheWho(name, level, zone, class)
@@ -1978,12 +1727,6 @@ MakeCheck(cfg,"Relay LocalDefense",20,-114,function() return DB.relayLocalDefens
 MakeCheck(cfg,"Relay Party",20,-146,function() return DB.relayParty end,function(v) DB.relayParty=v end)
 MakeCheck(cfg,"Relay Guild",220,-210,function() return DB.relayGuild end,function(v) DB.relayGuild=v end)
 MakeCheck(cfg,"Ignore my own messages",20,-302,function() return DB.ignoreOwnMessages end,function(v) DB.ignoreOwnMessages=v end)
-MakeCheck(cfg,"Relay flagged enemy alerts",20,-483,function() return DB.relayFriendStatus end,function(v) DB.relayFriendStatus=v end)
-local friendStatusHint=cfg:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
-friendStatusHint:SetPoint("TOPLEFT",20,-517)
-friendStatusHint:SetWidth(410)
-friendStatusHint:SetJustifyH("LEFT")
-friendStatusHint:SetText("Only flagged enemies are relayed. Manage the shared list with /vlenemy.")
 
 MakeCheck(cfg,"Include timestamp",220,-50,function() return DB.includeTimestamp end,function(v) DB.includeTimestamp=v end)
 MakeCheck(cfg,"Include zone",220,-82,function() return DB.includeZone end,function(v) DB.includeZone=v end)
@@ -2261,7 +2004,6 @@ SLASH_ALLIANCERELAYDIAG1="/ardiag"
 SlashCmdList["ALLIANCERELAYDIAG"]=function()
     Print("Sender diag:")
     Print("receivers="..ReceiverSummary())
-    Print("friend status relay="..tostring(DB.relayFriendStatus))
     Print("PREFIX="..PREFIX)
     if C_ChatInfo and C_ChatInfo.IsAddonMessagePrefixRegistered then
         Print("registered="..tostring(C_ChatInfo.IsAddonMessagePrefixRegistered(PREFIX)))
@@ -2316,13 +2058,10 @@ f:SetScript("OnEvent",function(self,event,...)
             heartbeatTicker = nil
             if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
             receiverMonitorTicker = nil
-            friendStatusReady = false
-            friendSnapshot = nil
             self:UnregisterEvent("CHAT_MSG_CHANNEL")
             self:UnregisterEvent("CHAT_MSG_PARTY")
             self:UnregisterEvent("CHAT_MSG_PARTY_LEADER")
             self:UnregisterEvent("CHAT_MSG_GUILD")
-            self:UnregisterEvent("FRIENDLIST_UPDATE")
             self:UnregisterEvent("CHAT_MSG_WHISPER")
             self:UnregisterEvent("CHAT_MSG_WHISPER_INFORM")
             self:UnregisterEvent("WHO_LIST_UPDATE")
@@ -2348,12 +2087,6 @@ f:SetScript("OnEvent",function(self,event,...)
         end
         if launcher then launcher:Hide() end
         EnsureReceiverDB()
-        friendStatusReady = true
-        friendSnapshot = nil
-        UpdateFriendStatus()
-        local refreshFriends = C_FriendList and C_FriendList.ShowFriends or ShowFriends
-        if type(refreshFriends) == "function" then pcall(refreshFriends) end
-        C_Timer.After(5,function() SyncEnemyFriends(false) end)
         for _,r in ipairs(DB.receivers or {}) do r.lastAck=0 end
         RestartHeartbeat()
         if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
@@ -2379,11 +2112,6 @@ f:SetScript("OnEvent",function(self,event,...)
     -- Belt-and-suspenders faction lock. No runtime event from this sender is
     -- allowed to do work unless the current character is Alliance.
     if UnitFactionGroup("player") ~= "Alliance" then return end
-
-    if event=="FRIENDLIST_UPDATE" then
-        UpdateFriendStatus()
-        return
-    end
 
     if event=="BN_FRIEND_INFO_CHANGED" then
         if not pairing then

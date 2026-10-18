@@ -867,7 +867,7 @@ syncTicker:SetScript("OnUpdate",function(_,elapsed)
     q.index=q.index+1
     local roster=ReadStandardFriends()
     if not roster then syncPending=nil;return end
-    if not roster[name] then
+    if not roster[name] and DB.flaggedEnemyFriends and DB.flaggedEnemyFriends[name] then
         local send=(C_FriendList and C_FriendList.AddFriend) or AddFriend
         local ok=pcall(send,name)
         if ok then q.remaining=q.remaining-1 end
@@ -891,6 +891,7 @@ SlashCmdList["VOIDLINKENEMY"]=function(msg)
         Print("Flagged enemies: "..(#names>0 and table.concat(names,", ") or "none"))
     elseif name and name~="" and (action=="add" or action=="remove") then
         SetEnemyFriend(name,action=="add")
+        if action=="add" then SyncEnemyFriends(false) end
     else
         Print("Use /vlenemy for the list, or /vlenemy add Name, remove Name, list, sync.")
     end
@@ -2303,12 +2304,12 @@ f:SetScript("OnEvent",function(self,event,...)
         end
         if launcher then launcher:Hide() end
         EnsureReceiverDB()
-        SyncEnemyFriends(false)
         friendStatusReady = true
         friendSnapshot = nil
         UpdateFriendStatus()
         local refreshFriends = C_FriendList and C_FriendList.ShowFriends or ShowFriends
         if type(refreshFriends) == "function" then pcall(refreshFriends) end
+        C_Timer.After(5,function() SyncEnemyFriends(false) end)
         for _,r in ipairs(DB.receivers or {}) do r.lastAck=0 end
         RestartHeartbeat()
         if receiverMonitorTicker and receiverMonitorTicker.Cancel then receiverMonitorTicker:Cancel() end
@@ -2337,7 +2338,6 @@ f:SetScript("OnEvent",function(self,event,...)
 
     if event=="FRIENDLIST_UPDATE" then
         UpdateFriendStatus()
-        InstallFriendFlagButton()
         return
     end
 

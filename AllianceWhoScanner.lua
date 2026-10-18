@@ -465,12 +465,31 @@ function M:AttachButton(parent, point, relativeTo, relativePoint, x, y)
     return b
 end
 
+local pendingGuildQuery=nil
+function M:ScanGuild(guild)
+    guild=tostring(guild or ""):match("^%s*(.-)%s*$")
+    if guild=="" then Print("Enter a guild name.");return false end
+    if #guild>60 then Print("Guild name too long.");return false end
+    local query='g-"'..guild:gsub('"','')..'"'
+    pendingGuildQuery=guild
+    pendingZone=nil
+    pendingQuery=query
+    if not SendWhoCompat(query) then
+        pendingGuildQuery=nil
+        Print("WHO API unavailable.")
+        return false
+    end
+    Print("WHO guild: "..guild.." (results may be capped).")
+    return true
+end
+
 local function SaveWhoResults()
     EnsureDB()
 
     local count = GetNumWhoResultsCompat()
     local saved = 0
     local resolvedPendingUnknown = false
+    local guildLines = {}
 
     for i = 1, count do
         local name, level, class, zone = GetWhoInfoCompat(i)
@@ -479,6 +498,7 @@ local function SaveWhoResults()
         if name and level and level > 0 then
             if M:RememberPlayer(name, level, class, zone or pendingZone, "WHO") then
                 saved = saved + 1
+                if pendingGuildQuery then guildLines[#guildLines+1]=name.." ("..tostring(level)..") - "..tostring(zone or "?") end
                 local key = NormalizeName(name)
                 if pendingUnknownKey and key == pendingUnknownKey then
                     resolvedPendingUnknown = true
@@ -487,6 +507,11 @@ local function SaveWhoResults()
         end
     end
 
+    if pendingGuildQuery then
+        Print("Guild "..pendingGuildQuery..": "..#guildLines.." WHO result(s).")
+        for i=1,math.min(#guildLines,50) do Print(guildLines[i]) end
+        pendingGuildQuery=nil
+    end
     DB.lastZone = pendingZone
     DB.lastScan = time()
 

@@ -56,7 +56,8 @@ local defaults = {
     relayGuild=true,
     relayIncomingDM=true,
     relayOutgoingDM=true,
-    friendStatusAlerts=false, -- private-window notices only; never a public output
+    friendStatusAlerts=false, -- only explicitly flagged enemy friends are sent by sender
+    friendStatusToChat=false, -- optional local chat output
 
     -- Persistent spy-chat archive. Every Alliance spy relay packet is logged
     -- as soon as it reaches this receiver, before receiver display/output
@@ -510,6 +511,7 @@ MakeCheck(cfg,"Party source",140,-134,function() return DB.relayPartySource end,
 MakeCheck(cfg,"Incoming DMs",20,-166,function() return DB.relayIncomingDM end,function(v) DB.relayIncomingDM=v end)
 MakeCheck(cfg,"Outgoing DMs",20,-198,function() return DB.relayOutgoingDM end,function(v) DB.relayOutgoingDM=v end)
 MakeCheck(cfg,"Friend login/logout",20,-230,function() return DB.friendStatusAlerts end,function(v) DB.friendStatusAlerts=v end)
+MakeCheck(cfg,"Friend alerts to chat",270,-262,function() return DB.friendStatusToChat end,function(v) DB.friendStatusToChat=v end)
 
 -- Output destinations. These decide WHERE enabled relay types are shown/sent.
 local destinationsLabel=cfg:CreateFontString(nil,"OVERLAY","GameFontNormal")
@@ -1709,6 +1711,9 @@ local function HandlePayload(payload,senderID)
         -- Receiving an alert does not open the window automatically.
         scroll:AddMessage(line)
         AddHistory(line)
+        if DB.friendStatusToChat and DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage(line)
+        end
         status:SetText(timestamp.." friend "..presence:lower())
         -- Audible cue for both friend login and logout alerts.
         if PlaySound and SOUNDKIT and SOUNDKIT.TELL_MESSAGE then

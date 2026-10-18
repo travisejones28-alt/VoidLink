@@ -11,7 +11,7 @@ local defaults = {
     minimapAngle = 225,
     chatLogging = true,
     nativeChatLogging = true,
-    chatRetentionDays = 30,
+    chatRetentionDays = 0, -- 0 = never delete history by age
     chatMaxPerDay = 5000,
     independentPairing = false,
     privatePairCode = "",
@@ -36,6 +36,13 @@ end
 local function ApplyDefaults()
     for k,v in pairs(defaults) do
         if DB[k] == nil then DB[k] = v end
+    end
+
+    -- One-time migration: the original 30-day default must not silently
+    -- continue deleting old records for players upgrading the addon.
+    if not DB.archiveKeepForeverMigrated then
+        if DB.chatRetentionDays == 30 or DB.chatRetentionDays == nil then DB.chatRetentionDays = 0 end
+        DB.archiveKeepForeverMigrated = true
     end
 
     local key = CharacterKey()
@@ -76,7 +83,7 @@ local function PruneChatLog(currentDay)
     DB._lastChatPruneDay = currentDay
 
     local keepDays = tonumber(DB.chatRetentionDays) or 30
-    if keepDays < 1 then keepDays = 1 end
+    if keepDays <= 0 then return end -- permanent archive
     local cutoff = time() - (keepDays * 86400)
 
     for dayKey,bucket in pairs(DB.chatLog) do
